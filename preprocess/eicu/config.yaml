@@ -1,0 +1,44 @@
+# eICU Dataset Preprocessing Configuration
+
+# Data directories
+data_dir: "/home/ma-user/sfs_turbo/Data/eicu-crd/2.0"  # Directory containing raw eICU CSV files
+output_dir: "/home/ma-user/sfs_turbo/sai6/zkwan/eicu-crd/processed"  # Output directory for processed files
+
+# External mapping files (for diagnosis task)
+ccs_path: "ccs_multi_dx_tool_2015.csv"  # CCS diagnosis mapping file (place in preprocess/eicu/)
+gem_path: "icd10cmtoicd9gem.csv"  # ICD-10 to ICD-9 GEM file (place in preprocess/eicu/)
+
+# Cohort filtering parameters
+min_age: 18  # Minimum age in years
+max_age: 89  # Maximum age in years (>89 coded as 300)
+first_icu_only: true  # Only include first ICU admission per hospital stay
+
+# Time window parameters (in hours)
+# Match GenHPF defaults
+obs_size: 12  # Observation window size
+gap_size: 12  # Gap between observation and prediction windows
+pred_size: 24  # Prediction window size
+long_term_pred_size: 336  # Long-term prediction window (14 days)
+
+# Enabled prediction tasks
+tasks:
+  - mortality  # In-ICU/hospital mortality within prediction window
+  - long_term_mortality  # Long-term mortality (14 days)
+  - readmission  # ICU readmission
+  - los_3day  # Length of stay > 3 days
+  - los_7day  # Length of stay > 7 days
+  - final_acuity  # Final discharge destination
+  - imminent_discharge  # Discharge within prediction window
+  - diagnosis  # Multi-label CCS diagnoses (requires CCS mapping files)
+  - creatinine  # Creatinine severity (0-4, SOFA-based)
+  - bilirubin  # Bilirubin severity (0-4, SOFA-based)
+  - platelets  # Platelet count severity (0-4, SOFA-based)
+  - wbc  # WBC count severity (0-2)
+
+# Train/validation/test split ratios
+train_ratio: 0.7
+val_ratio: 0.15
+test_ratio: 0.15
+
+# Random seed for reproducibility
+random_seed: 42

@@ -1,0 +1,142 @@
+import os
+import sys
+import json
+import torch
+import torch.nn as nn
+import pandas as pd
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
+from peft import LoraConfig, get_peft_model, PeftModel
+import glob
+from transformers import Trainer, TrainingArguments, HfArgumentParser, set_seed
+
+# Add project root to path
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(project_root)
+
+def rank0_print(*args, **kwargs):
+    local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+    if local_rank in [-1, 0]:
+        print(*args, **kwargs)
+
+from dataset.renji_dataset import RenjiDataset
+from models.encoder_classifier import LongTableEncoderClassifier
+from models.TableEncoder.config import TableEncoderConfig
+from utils.weight_loader import load_model_weights
+from utils.load_embedding import load_embedding_cache, get_embedding
+from utils.collate import create_collate_fn
+
+@dataclass
+class ModelArguments:
+    attention_mode: str = field(default='1d', metadata={"help": "Attention mode: '1d', '2d_grid', or 'hierarchical'"})
+    pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to pre-trained model checkpoint (safetensors or bin) or TAPAS base"})
+    
+    # LoRA options
+    use_lora: bool = field(default=False, metadata={"help": "Apply LoRA adapters to encoder linear layers via peft"})
+    lora_r: int = field(default=16, metadata={"help": "LoRA rank"})
+    lora_alpha: int = field(default=32, metadata={"help": "LoRA alpha (scaling = alpha/r)"})
+    lora_dropout: float = field(default=0.05, metadata={"help": "LoRA dropout"})
+    lora_target_modules: str = field(
+        default="qkv,proj,w12,w3",
+        metadata={"help": "Comma-separated list of Linear layer names to apply LoRA to."}
+    )
+
+
+@dataclass
+class DataArguments:
+    data_dir: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/Renji")
+    embedding_cache: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/.cache/embeddings/renji/text_embeddings.pt")
+    max_train_samples: Optional[int] = field(default=None)
+    type_vocab_file: str = field(default="data/type_vocab.json")
+
+
+@dataclass
+class CustomTrainingArguments(TrainingArguments):
+    wandb_project: Optional[str] = field(default="Renji")
+
+
+def main():
+    parser = HfArgumentParser((ModelArguments, DataArguments, CustomTrainingArguments))
+    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    
+    training_args.warmup_ratio = 0.1
+    training_args.weight_decay = 0.01
+    training_args.seed = 42
+    training_args.logging_strategy = "steps"
+    training_args.logging_steps = 10
+    training_args.save_strategy = "steps"
+    training_args.save_steps = 100
+    training_args.save_total_limit = 2
+    training_args.bf16 = True
+    training_args.dataloader_num_workers = 4
+    training_args.remove_unused_columns = False
+    training_args.report_to = ["wandb"]
+    training_args.save_safetensors = True
+        
+    model_args.attention_mode = "1d"
+    
+    if training_args.wandb_project:
+        os.environ["WANDB_PROJECT"] = training_args.wandb_project
+    training_args.ddp_find_unused_parameters = False
+    set_seed(training_args.seed)
+
+    _, text_dim = load_embedding_cache(data_args.embedding_cache)
+    
+    vocab_path = os.path.join(project_root, data_args.type_vocab_file)
+    with open(vocab_path, 'r') as f:
+        type_vocab = json.load(f)
+
+    train_dataset = RenjiDataset(
+        root_dir=data_args.data_dir, split="train", table_mode="table_only", shuffle=True,
+        max_samples=data_args.max_train_samples, task_mode='multi_label'
+    )
+
+    encoder_config = TableEncoderConfig(
+        text_dim=text_dim,
+        attention_mode=model_args.attention_mode,
+        type_vocab_size=len(type_vocab),
+        num_points=len(RenjiDataset.ALL_POINTS),
+        num_metrics=len(RenjiDataset.ALL_METRICS),
+        num_classes=len(RenjiDataset.ALL_POINTS) * len(RenjiDataset.ALL_METRICS),
+        problem_type="multi_label_classification"
+    )
+    
+    model = LongTableEncoderClassifier(config=encoder_config)
+    model = load_model_weights(model, model_args.pretrained_path, use_lora=False, is_trainable=False)
+    
+    if model_args.use_lora:
+        existing_ckpts = sorted(glob.glob(os.path.join(training_args.output_dir, "checkpoint-*")), key=lambda p: int(p.rsplit("-", 1)[-1]))
+        if training_args.resume_from_checkpoint and existing_ckpts:
+            latest_ckpt = existing_ckpts[-1]
+            rank0_print(f"Loading LoRA adapter weights from checkpoint: {latest_ckpt}")
+            model = PeftModel.from_pretrained(model, latest_ckpt, is_trainable=True)
+        else:
+            target_modules = [m.strip() for m in model_args.lora_target_modules.split(',')]
+            lora_cfg = LoraConfig(
+                r=model_args.lora_r, lora_alpha=model_args.lora_alpha, lora_dropout=model_args.lora_dropout, bias="none",
+                target_modules=target_modules,
+                modules_to_save=["classifier", "item_proj", "unit_proj", "value_text_proj", "type_embedding", "numeric_proj"],
+            )
+            model = get_peft_model(model, lora_cfg)
+        model.print_trainable_parameters()
+
+    trainer = Trainer(
+        model=model, args=training_args,
+        train_dataset=train_dataset,
+        data_collator=create_collate_fn(type_vocab),
+    )
+
+    resume_ckpt = None
+    if training_args.resume_from_checkpoint:
+        rfc = training_args.resume_from_checkpoint
+        if isinstance(rfc, str) and rfc.lower() not in ("true", "1", "yes"): resume_ckpt = rfc
+        else:
+            ckpt_dirs = sorted(glob.glob(os.path.join(training_args.output_dir, "checkpoint-*")), key=lambda p: int(p.rsplit("-", 1)[-1]))
+            if ckpt_dirs: resume_ckpt = ckpt_dirs[-1]
+
+    trainer.train(resume_from_checkpoint=resume_ckpt)
+    trainer.save_model()
+
+
+if __name__ == "__main__":
+    main()

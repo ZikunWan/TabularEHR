@@ -1,0 +1,2382 @@
+{
+  "ALB": {
+    "2w-1m": {
+      "positive_patients": 1951,
+      "negative_patients": 1968,
+      "missing_patients": 123,
+      "observed_patients": 3919,
+      "positive_ratio_observed": 0.497831,
+      "negative_ratio_observed": 0.502169,
+      "positive_ratio_total": 0.482682,
+      "negative_ratio_total": 0.486888,
+      "missing_ratio_total": 0.03043
+    },
+    "2m-6m": {
+      "positive_patients": 2637,
+      "negative_patients": 1213,
+      "missing_patients": 192,
+      "observed_patients": 3850,
+      "positive_ratio_observed": 0.684935,
+      "negative_ratio_observed": 0.315065,
+      "positive_ratio_total": 0.6524,
+      "negative_ratio_total": 0.300099,
+      "missing_ratio_total": 0.047501
+    },
+    "7m-12m": {
+      "positive_patients": 1989,
+      "negative_patients": 1557,
+      "missing_patients": 496,
+      "observed_patients": 3546,
+      "positive_ratio_observed": 0.560914,
+      "negative_ratio_observed": 0.439086,
+      "positive_ratio_total": 0.492083,
+      "negative_ratio_total": 0.385205,
+      "missing_ratio_total": 0.122712
+    },
+    "13m-14m": {
+      "positive_patients": 593,
+      "negative_patients": 1967,
+      "missing_patients": 1482,
+      "observed_patients": 2560,
+      "positive_ratio_observed": 0.231641,
+      "negative_ratio_observed": 0.768359,
+      "positive_ratio_total": 0.14671,
+      "negative_ratio_total": 0.48664,
+      "missing_ratio_total": 0.36665
+    },
+    "15m-24m": {
+      "positive_patients": 1432,
+      "negative_patients": 1816,
+      "missing_patients": 794,
+      "observed_patients": 3248,
+      "positive_ratio_observed": 0.440887,
+      "negative_ratio_observed": 0.559113,
+      "positive_ratio_total": 0.35428,
+      "negative_ratio_total": 0.449283,
+      "missing_ratio_total": 0.196437
+    },
+    "2y+": {
+      "positive_patients": 1485,
+      "negative_patients": 1410,
+      "missing_patients": 1147,
+      "observed_patients": 2895,
+      "positive_ratio_observed": 0.512953,
+      "negative_ratio_observed": 0.487047,
+      "positive_ratio_total": 0.367392,
+      "negative_ratio_total": 0.348837,
+      "missing_ratio_total": 0.28377
+    }
+  },
+  "ALP": {
+    "2w-1m": {
+      "positive_patients": 1932,
+      "negative_patients": 1986,
+      "missing_patients": 124,
+      "observed_patients": 3918,
+      "positive_ratio_observed": 0.493109,
+      "negative_ratio_observed": 0.506891,
+      "positive_ratio_total": 0.477981,
+      "negative_ratio_total": 0.491341,
+      "missing_ratio_total": 0.030678
+    },
+    "2m-6m": {
+      "positive_patients": 1849,
+      "negative_patients": 2000,
+      "missing_patients": 193,
+      "observed_patients": 3849,
+      "positive_ratio_observed": 0.480385,
+      "negative_ratio_observed": 0.519615,
+      "positive_ratio_total": 0.457447,
+      "negative_ratio_total": 0.494805,
+      "missing_ratio_total": 0.047749
+    },
+    "7m-12m": {
+      "positive_patients": 1266,
+      "negative_patients": 2263,
+      "missing_patients": 513,
+      "observed_patients": 3529,
+      "positive_ratio_observed": 0.358742,
+      "negative_ratio_observed": 0.641258,
+      "positive_ratio_total": 0.313211,
+      "negative_ratio_total": 0.559871,
+      "missing_ratio_total": 0.126917
+    },
+    "13m-14m": {
+      "positive_patients": 368,
+      "negative_patients": 2143,
+      "missing_patients": 1531,
+      "observed_patients": 2511,
+      "positive_ratio_observed": 0.146555,
+      "negative_ratio_observed": 0.853445,
+      "positive_ratio_total": 0.091044,
+      "negative_ratio_total": 0.530183,
+      "missing_ratio_total": 0.378773
+    },
+    "15m-24m": {
+      "positive_patients": 1157,
+      "negative_patients": 2065,
+      "missing_patients": 820,
+      "observed_patients": 3222,
+      "positive_ratio_observed": 0.359094,
+      "negative_ratio_observed": 0.640906,
+      "positive_ratio_total": 0.286244,
+      "negative_ratio_total": 0.510886,
+      "missing_ratio_total": 0.20287
+    },
+    "2y+": {
+      "positive_patients": 1369,
+      "negative_patients": 1522,
+      "missing_patients": 1151,
+      "observed_patients": 2891,
+      "positive_ratio_observed": 0.473539,
+      "negative_ratio_observed": 0.526461,
+      "positive_ratio_total": 0.338694,
+      "negative_ratio_total": 0.376546,
+      "missing_ratio_total": 0.28476
+    }
+  },
+  "ALT": {
+    "2w-1m": {
+      "positive_patients": 2073,
+      "negative_patients": 1846,
+      "missing_patients": 123,
+      "observed_patients": 3919,
+      "positive_ratio_observed": 0.528961,
+      "negative_ratio_observed": 0.471039,
+      "positive_ratio_total": 0.512865,
+      "negative_ratio_total": 0.456705,
+      "missing_ratio_total": 0.03043
+    },
+    "2m-6m": {
+      "positive_patients": 2757,
+      "negative_patients": 1093,
+      "missing_patients": 192,
+      "observed_patients": 3850,
+      "positive_ratio_observed": 0.716104,
+      "negative_ratio_observed": 0.283896,
+      "positive_ratio_total": 0.682088,
+      "negative_ratio_total": 0.270411,
+      "missing_ratio_total": 0.047501
+    },
+    "7m-12m": {
+      "positive_patients": 2193,
+      "negative_patients": 1356,
+      "missing_patients": 493,
+      "observed_patients": 3549,
+      "positive_ratio_observed": 0.617921,
+      "negative_ratio_observed": 0.382079,
+      "positive_ratio_total": 0.542553,
+      "negative_ratio_total": 0.335477,
+      "missing_ratio_total": 0.121969
+    },
+    "13m-14m": {
+      "positive_patients": 794,
+      "negative_patients": 1798,
+      "missing_patients": 1450,
+      "observed_patients": 2592,
+      "positive_ratio_observed": 0.306327,
+      "negative_ratio_observed": 0.693673,
+      "positive_ratio_total": 0.196437,
+      "negative_ratio_total": 0.444829,
+      "missing_ratio_total": 0.358733
+    },
+    "15m-24m": {
+      "positive_patients": 2045,
+      "negative_patients": 1210,
+      "missing_patients": 787,
+      "observed_patients": 3255,
+      "positive_ratio_observed": 0.628264,
+      "negative_ratio_observed": 0.371736,
+      "positive_ratio_total": 0.505938,
+      "negative_ratio_total": 0.299357,
+      "missing_ratio_total": 0.194706
+    },
+    "2y+": {
+      "positive_patients": 2073,
+      "negative_patients": 825,
+      "missing_patients": 1144,
+      "observed_patients": 2898,
+      "positive_ratio_observed": 0.715321,
+      "negative_ratio_observed": 0.284679,
+      "positive_ratio_total": 0.512865,
+      "negative_ratio_total": 0.204107,
+      "missing_ratio_total": 0.283028
+    }
+  },
+  "AST": {
+    "2w-1m": {
+      "positive_patients": 1813,
+      "negative_patients": 2106,
+      "missing_patients": 123,
+      "observed_patients": 3919,
+      "positive_ratio_observed": 0.462618,
+      "negative_ratio_observed": 0.537382,
+      "positive_ratio_total": 0.44854,
+      "negative_ratio_total": 0.521029,
+      "missing_ratio_total": 0.03043
+    },
+    "2m-6m": {
+      "positive_patients": 2381,
+      "negative_patients": 1467,
+      "missing_patients": 194,
+      "observed_patients": 3848,
+      "positive_ratio_observed": 0.618763,
+      "negative_ratio_observed": 0.381237,
+      "positive_ratio_total": 0.589065,
+      "negative_ratio_total": 0.362939,
+      "missing_ratio_total": 0.047996
+    },
+    "7m-12m": {
+      "positive_patients": 1926,
+      "negative_patients": 1621,
+      "missing_patients": 495,
+      "observed_patients": 3547,
+      "positive_ratio_observed": 0.542994,
+      "negative_ratio_observed": 0.457006,
+      "positive_ratio_total": 0.476497,
+      "negative_ratio_total": 0.401039,
+      "missing_ratio_total": 0.122464
+    },
+    "13m-14m": {
+      "positive_patients": 678,
+      "negative_patients": 1909,
+      "missing_patients": 1455,
+      "observed_patients": 2587,
+      "positive_ratio_observed": 0.26208,
+      "negative_ratio_observed": 0.73792,
+      "positive_ratio_total": 0.167739,
+      "negative_ratio_total": 0.472291,
+      "missing_ratio_total": 0.35997
+    },
+    "15m-24m": {
+      "positive_patients": 2055,
+      "negative_patients": 1198,
+      "missing_patients": 789,
+      "observed_patients": 3253,
+      "positive_ratio_observed": 0.631725,
+      "negative_ratio_observed": 0.368275,
+      "positive_ratio_total": 0.508412,
+      "negative_ratio_total": 0.296388,
+      "missing_ratio_total": 0.1952
+    },
+    "2y+": {
+      "positive_patients": 2030,
+      "negative_patients": 868,
+      "missing_patients": 1144,
+      "observed_patients": 2898,
+      "positive_ratio_observed": 0.700483,
+      "negative_ratio_observed": 0.299517,
+      "positive_ratio_total": 0.502227,
+      "negative_ratio_total": 0.214745,
+      "missing_ratio_total": 0.283028
+    }
+  },
+  "CMV-DNA": {
+    "2w-1m": {
+      "positive_patients": 38,
+      "negative_patients": 1324,
+      "missing_patients": 2680,
+      "observed_patients": 1362,
+      "positive_ratio_observed": 0.0279,
+      "negative_ratio_observed": 0.9721,
+      "positive_ratio_total": 0.009401,
+      "negative_ratio_total": 0.327561,
+      "missing_ratio_total": 0.663038
+    },
+    "2m-6m": {
+      "positive_patients": 1620,
+      "negative_patients": 1985,
+      "missing_patients": 437,
+      "observed_patients": 3605,
+      "positive_ratio_observed": 0.449376,
+      "negative_ratio_observed": 0.550624,
+      "positive_ratio_total": 0.400792,
+      "negative_ratio_total": 0.491094,
+      "missing_ratio_total": 0.108115
+    },
+    "7m-12m": {
+      "positive_patients": 773,
+      "negative_patients": 2423,
+      "missing_patients": 846,
+      "observed_patients": 3196,
+      "positive_ratio_observed": 0.241865,
+      "negative_ratio_observed": 0.758135,
+      "positive_ratio_total": 0.191242,
+      "negative_ratio_total": 0.599456,
+      "missing_ratio_total": 0.209302
+    },
+    "13m-14m": {
+      "positive_patients": 116,
+      "negative_patients": 1433,
+      "missing_patients": 2493,
+      "observed_patients": 1549,
+      "positive_ratio_observed": 0.074887,
+      "negative_ratio_observed": 0.925113,
+      "positive_ratio_total": 0.028699,
+      "negative_ratio_total": 0.354527,
+      "missing_ratio_total": 0.616774
+    },
+    "15m-24m": {
+      "positive_patients": 381,
+      "negative_patients": 2514,
+      "missing_patients": 1147,
+      "observed_patients": 2895,
+      "positive_ratio_observed": 0.131606,
+      "negative_ratio_observed": 0.868394,
+      "positive_ratio_total": 0.09426,
+      "negative_ratio_total": 0.621969,
+      "missing_ratio_total": 0.28377
+    },
+    "2y+": {
+      "positive_patients": 373,
+      "negative_patients": 2392,
+      "missing_patients": 1277,
+      "observed_patients": 2765,
+      "positive_ratio_observed": 0.134901,
+      "negative_ratio_observed": 0.865099,
+      "positive_ratio_total": 0.092281,
+      "negative_ratio_total": 0.591786,
+      "missing_ratio_total": 0.315933
+    }
+  },
+  "CR": {
+    "2w-1m": {
+      "positive_patients": 1759,
+      "negative_patients": 2150,
+      "missing_patients": 133,
+      "observed_patients": 3909,
+      "positive_ratio_observed": 0.449987,
+      "negative_ratio_observed": 0.550013,
+      "positive_ratio_total": 0.435181,
+      "negative_ratio_total": 0.531915,
+      "missing_ratio_total": 0.032905
+    },
+    "2m-6m": {
+      "positive_patients": 2209,
+      "negative_patients": 1633,
+      "missing_patients": 200,
+      "observed_patients": 3842,
+      "positive_ratio_observed": 0.574961,
+      "negative_ratio_observed": 0.425039,
+      "positive_ratio_total": 0.546512,
+      "negative_ratio_total": 0.404008,
+      "missing_ratio_total": 0.04948
+    },
+    "7m-12m": {
+      "positive_patients": 1345,
+      "negative_patients": 2028,
+      "missing_patients": 669,
+      "observed_patients": 3373,
+      "positive_ratio_observed": 0.398755,
+      "negative_ratio_observed": 0.601245,
+      "positive_ratio_total": 0.332756,
+      "negative_ratio_total": 0.501732,
+      "missing_ratio_total": 0.165512
+    },
+    "13m-14m": {
+      "positive_patients": 383,
+      "negative_patients": 1739,
+      "missing_patients": 1920,
+      "observed_patients": 2122,
+      "positive_ratio_observed": 0.18049,
+      "negative_ratio_observed": 0.81951,
+      "positive_ratio_total": 0.094755,
+      "negative_ratio_total": 0.430233,
+      "missing_ratio_total": 0.475012
+    },
+    "15m-24m": {
+      "positive_patients": 1421,
+      "negative_patients": 1628,
+      "missing_patients": 993,
+      "observed_patients": 3049,
+      "positive_ratio_observed": 0.466054,
+      "negative_ratio_observed": 0.533946,
+      "positive_ratio_total": 0.351559,
+      "negative_ratio_total": 0.402771,
+      "missing_ratio_total": 0.24567
+    },
+    "2y+": {
+      "positive_patients": 1369,
+      "negative_patients": 1483,
+      "missing_patients": 1190,
+      "observed_patients": 2852,
+      "positive_ratio_observed": 0.480014,
+      "negative_ratio_observed": 0.519986,
+      "positive_ratio_total": 0.338694,
+      "negative_ratio_total": 0.366898,
+      "missing_ratio_total": 0.294409
+    }
+  },
+  "DB": {
+    "2w-1m": {
+      "positive_patients": 1666,
+      "negative_patients": 2229,
+      "missing_patients": 147,
+      "observed_patients": 3895,
+      "positive_ratio_observed": 0.427728,
+      "negative_ratio_observed": 0.572272,
+      "positive_ratio_total": 0.412172,
+      "negative_ratio_total": 0.55146,
+      "missing_ratio_total": 0.036368
+    },
+    "2m-6m": {
+      "positive_patients": 1054,
+      "negative_patients": 2794,
+      "missing_patients": 194,
+      "observed_patients": 3848,
+      "positive_ratio_observed": 0.273909,
+      "negative_ratio_observed": 0.726091,
+      "positive_ratio_total": 0.260762,
+      "negative_ratio_total": 0.691242,
+      "missing_ratio_total": 0.047996
+    },
+    "7m-12m": {
+      "positive_patients": 531,
+      "negative_patients": 3004,
+      "missing_patients": 507,
+      "observed_patients": 3535,
+      "positive_ratio_observed": 0.150212,
+      "negative_ratio_observed": 0.849788,
+      "positive_ratio_total": 0.131371,
+      "negative_ratio_total": 0.743196,
+      "missing_ratio_total": 0.125433
+    },
+    "13m-14m": {
+      "positive_patients": 162,
+      "negative_patients": 2376,
+      "missing_patients": 1504,
+      "observed_patients": 2538,
+      "positive_ratio_observed": 0.06383,
+      "negative_ratio_observed": 0.93617,
+      "positive_ratio_total": 0.040079,
+      "negative_ratio_total": 0.587828,
+      "missing_ratio_total": 0.372093
+    },
+    "15m-24m": {
+      "positive_patients": 580,
+      "negative_patients": 2659,
+      "missing_patients": 803,
+      "observed_patients": 3239,
+      "positive_ratio_observed": 0.179068,
+      "negative_ratio_observed": 0.820932,
+      "positive_ratio_total": 0.143493,
+      "negative_ratio_total": 0.657843,
+      "missing_ratio_total": 0.198664
+    },
+    "2y+": {
+      "positive_patients": 983,
+      "negative_patients": 1912,
+      "missing_patients": 1147,
+      "observed_patients": 2895,
+      "positive_ratio_observed": 0.339551,
+      "negative_ratio_observed": 0.660449,
+      "positive_ratio_total": 0.243196,
+      "negative_ratio_total": 0.473033,
+      "missing_ratio_total": 0.28377
+    }
+  },
+  "EBV-DNA": {
+    "2w-1m": {
+      "positive_patients": 101,
+      "negative_patients": 1250,
+      "missing_patients": 2691,
+      "observed_patients": 1351,
+      "positive_ratio_observed": 0.074759,
+      "negative_ratio_observed": 0.925241,
+      "positive_ratio_total": 0.024988,
+      "negative_ratio_total": 0.309253,
+      "missing_ratio_total": 0.66576
+    },
+    "2m-6m": {
+      "positive_patients": 1994,
+      "negative_patients": 1600,
+      "missing_patients": 448,
+      "observed_patients": 3594,
+      "positive_ratio_observed": 0.554814,
+      "negative_ratio_observed": 0.445186,
+      "positive_ratio_total": 0.49332,
+      "negative_ratio_total": 0.395844,
+      "missing_ratio_total": 0.110836
+    },
+    "7m-12m": {
+      "positive_patients": 2036,
+      "negative_patients": 1211,
+      "missing_patients": 795,
+      "observed_patients": 3247,
+      "positive_ratio_observed": 0.62704,
+      "negative_ratio_observed": 0.37296,
+      "positive_ratio_total": 0.503711,
+      "negative_ratio_total": 0.299604,
+      "missing_ratio_total": 0.196685
+    },
+    "13m-14m": {
+      "positive_patients": 1082,
+      "negative_patients": 570,
+      "missing_patients": 2390,
+      "observed_patients": 1652,
+      "positive_ratio_observed": 0.654964,
+      "negative_ratio_observed": 0.345036,
+      "positive_ratio_total": 0.267689,
+      "negative_ratio_total": 0.141019,
+      "missing_ratio_total": 0.591291
+    },
+    "15m-24m": {
+      "positive_patients": 2007,
+      "negative_patients": 951,
+      "missing_patients": 1084,
+      "observed_patients": 2958,
+      "positive_ratio_observed": 0.678499,
+      "negative_ratio_observed": 0.321501,
+      "positive_ratio_total": 0.496536,
+      "negative_ratio_total": 0.23528,
+      "missing_ratio_total": 0.268184
+    },
+    "2y+": {
+      "positive_patients": 2148,
+      "negative_patients": 656,
+      "missing_patients": 1238,
+      "observed_patients": 2804,
+      "positive_ratio_observed": 0.766049,
+      "negative_ratio_observed": 0.233951,
+      "positive_ratio_total": 0.53142,
+      "negative_ratio_total": 0.162296,
+      "missing_ratio_total": 0.306284
+    }
+  },
+  "HB": {
+    "2w-1m": {
+      "positive_patients": 3574,
+      "negative_patients": 335,
+      "missing_patients": 133,
+      "observed_patients": 3909,
+      "positive_ratio_observed": 0.9143,
+      "negative_ratio_observed": 0.0857,
+      "positive_ratio_total": 0.884216,
+      "negative_ratio_total": 0.08288,
+      "missing_ratio_total": 0.032905
+    },
+    "2m-6m": {
+      "positive_patients": 3085,
+      "negative_patients": 763,
+      "missing_patients": 194,
+      "observed_patients": 3848,
+      "positive_ratio_observed": 0.801715,
+      "negative_ratio_observed": 0.198285,
+      "positive_ratio_total": 0.763236,
+      "negative_ratio_total": 0.188768,
+      "missing_ratio_total": 0.047996
+    },
+    "7m-12m": {
+      "positive_patients": 2284,
+      "negative_patients": 1225,
+      "missing_patients": 533,
+      "observed_patients": 3509,
+      "positive_ratio_observed": 0.650898,
+      "negative_ratio_observed": 0.349102,
+      "positive_ratio_total": 0.565067,
+      "negative_ratio_total": 0.303068,
+      "missing_ratio_total": 0.131865
+    },
+    "13m-14m": {
+      "positive_patients": 840,
+      "negative_patients": 1559,
+      "missing_patients": 1643,
+      "observed_patients": 2399,
+      "positive_ratio_observed": 0.350146,
+      "negative_ratio_observed": 0.649854,
+      "positive_ratio_total": 0.207818,
+      "negative_ratio_total": 0.3857,
+      "missing_ratio_total": 0.406482
+    },
+    "15m-24m": {
+      "positive_patients": 1614,
+      "negative_patients": 1599,
+      "missing_patients": 829,
+      "observed_patients": 3213,
+      "positive_ratio_observed": 0.502334,
+      "negative_ratio_observed": 0.497666,
+      "positive_ratio_total": 0.399307,
+      "negative_ratio_total": 0.395596,
+      "missing_ratio_total": 0.205096
+    },
+    "2y+": {
+      "positive_patients": 1528,
+      "negative_patients": 1356,
+      "missing_patients": 1158,
+      "observed_patients": 2884,
+      "positive_ratio_observed": 0.52982,
+      "negative_ratio_observed": 0.47018,
+      "positive_ratio_total": 0.378031,
+      "negative_ratio_total": 0.335477,
+      "missing_ratio_total": 0.286492
+    }
+  },
+  "HBcAb": {
+    "2w-1m": {
+      "positive_patients": 80,
+      "negative_patients": 133,
+      "missing_patients": 3829,
+      "observed_patients": 213,
+      "positive_ratio_observed": 0.375587,
+      "negative_ratio_observed": 0.624413,
+      "positive_ratio_total": 0.019792,
+      "negative_ratio_total": 0.032905,
+      "missing_ratio_total": 0.947303
+    },
+    "2m-6m": {
+      "positive_patients": 1391,
+      "negative_patients": 1105,
+      "missing_patients": 1546,
+      "observed_patients": 2496,
+      "positive_ratio_observed": 0.557292,
+      "negative_ratio_observed": 0.442708,
+      "positive_ratio_total": 0.344137,
+      "negative_ratio_total": 0.27338,
+      "missing_ratio_total": 0.382484
+    },
+    "7m-12m": {
+      "positive_patients": 1158,
+      "negative_patients": 934,
+      "missing_patients": 1950,
+      "observed_patients": 2092,
+      "positive_ratio_observed": 0.553537,
+      "negative_ratio_observed": 0.446463,
+      "positive_ratio_total": 0.286492,
+      "negative_ratio_total": 0.231074,
+      "missing_ratio_total": 0.482434
+    },
+    "13m-14m": {
+      "positive_patients": 409,
+      "negative_patients": 393,
+      "missing_patients": 3240,
+      "observed_patients": 802,
+      "positive_ratio_observed": 0.509975,
+      "negative_ratio_observed": 0.490025,
+      "positive_ratio_total": 0.101188,
+      "negative_ratio_total": 0.097229,
+      "missing_ratio_total": 0.801583
+    },
+    "15m-24m": {
+      "positive_patients": 1195,
+      "negative_patients": 770,
+      "missing_patients": 2077,
+      "observed_patients": 1965,
+      "positive_ratio_observed": 0.608142,
+      "negative_ratio_observed": 0.391858,
+      "positive_ratio_total": 0.295646,
+      "negative_ratio_total": 0.1905,
+      "missing_ratio_total": 0.513855
+    },
+    "2y+": {
+      "positive_patients": 1922,
+      "negative_patients": 768,
+      "missing_patients": 1352,
+      "observed_patients": 2690,
+      "positive_ratio_observed": 0.714498,
+      "negative_ratio_observed": 0.285502,
+      "positive_ratio_total": 0.475507,
+      "negative_ratio_total": 0.190005,
+      "missing_ratio_total": 0.334488
+    }
+  },
+  "HBeAb": {
+    "2w-1m": {
+      "positive_patients": 33,
+      "negative_patients": 167,
+      "missing_patients": 3842,
+      "observed_patients": 200,
+      "positive_ratio_observed": 0.165,
+      "negative_ratio_observed": 0.835,
+      "positive_ratio_total": 0.008164,
+      "negative_ratio_total": 0.041316,
+      "missing_ratio_total": 0.95052
+    },
+    "2m-6m": {
+      "positive_patients": 287,
+      "negative_patients": 2161,
+      "missing_patients": 1594,
+      "observed_patients": 2448,
+      "positive_ratio_observed": 0.117239,
+      "negative_ratio_observed": 0.882761,
+      "positive_ratio_total": 0.071004,
+      "negative_ratio_total": 0.534636,
+      "missing_ratio_total": 0.394359
+    },
+    "7m-12m": {
+      "positive_patients": 239,
+      "negative_patients": 1791,
+      "missing_patients": 2012,
+      "observed_patients": 2030,
+      "positive_ratio_observed": 0.117734,
+      "negative_ratio_observed": 0.882266,
+      "positive_ratio_total": 0.059129,
+      "negative_ratio_total": 0.443097,
+      "missing_ratio_total": 0.497773
+    },
+    "13m-14m": {
+      "positive_patients": 74,
+      "negative_patients": 722,
+      "missing_patients": 3246,
+      "observed_patients": 796,
+      "positive_ratio_observed": 0.092965,
+      "negative_ratio_observed": 0.907035,
+      "positive_ratio_total": 0.018308,
+      "negative_ratio_total": 0.178624,
+      "missing_ratio_total": 0.803068
+    },
+    "15m-24m": {
+      "positive_patients": 414,
+      "negative_patients": 1516,
+      "missing_patients": 2112,
+      "observed_patients": 1930,
+      "positive_ratio_observed": 0.214508,
+      "negative_ratio_observed": 0.785492,
+      "positive_ratio_total": 0.102425,
+      "negative_ratio_total": 0.375062,
+      "missing_ratio_total": 0.522514
+    },
+    "2y+": {
+      "positive_patients": 1034,
+      "negative_patients": 1642,
+      "missing_patients": 1366,
+      "observed_patients": 2676,
+      "positive_ratio_observed": 0.386398,
+      "negative_ratio_observed": 0.613602,
+      "positive_ratio_total": 0.255814,
+      "negative_ratio_total": 0.406235,
+      "missing_ratio_total": 0.337952
+    }
+  },
+  "HBeAg": {
+    "2w-1m": {
+      "positive_patients": 1,
+      "negative_patients": 199,
+      "missing_patients": 3842,
+      "observed_patients": 200,
+      "positive_ratio_observed": 0.005,
+      "negative_ratio_observed": 0.995,
+      "positive_ratio_total": 0.000247,
+      "negative_ratio_total": 0.049233,
+      "missing_ratio_total": 0.95052
+    },
+    "2m-6m": {
+      "positive_patients": 8,
+      "negative_patients": 2426,
+      "missing_patients": 1608,
+      "observed_patients": 2434,
+      "positive_ratio_observed": 0.003287,
+      "negative_ratio_observed": 0.996713,
+      "positive_ratio_total": 0.001979,
+      "negative_ratio_total": 0.600198,
+      "missing_ratio_total": 0.397823
+    },
+    "7m-12m": {
+      "positive_patients": 31,
+      "negative_patients": 1997,
+      "missing_patients": 2014,
+      "observed_patients": 2028,
+      "positive_ratio_observed": 0.015286,
+      "negative_ratio_observed": 0.984714,
+      "positive_ratio_total": 0.007669,
+      "negative_ratio_total": 0.494062,
+      "missing_ratio_total": 0.498268
+    },
+    "13m-14m": {
+      "positive_patients": 16,
+      "negative_patients": 777,
+      "missing_patients": 3249,
+      "observed_patients": 793,
+      "positive_ratio_observed": 0.020177,
+      "negative_ratio_observed": 0.979823,
+      "positive_ratio_total": 0.003958,
+      "negative_ratio_total": 0.192232,
+      "missing_ratio_total": 0.80381
+    },
+    "15m-24m": {
+      "positive_patients": 72,
+      "negative_patients": 1856,
+      "missing_patients": 2114,
+      "observed_patients": 1928,
+      "positive_ratio_observed": 0.037344,
+      "negative_ratio_observed": 0.962656,
+      "positive_ratio_total": 0.017813,
+      "negative_ratio_total": 0.459179,
+      "missing_ratio_total": 0.523008
+    },
+    "2y+": {
+      "positive_patients": 200,
+      "negative_patients": 2476,
+      "missing_patients": 1366,
+      "observed_patients": 2676,
+      "positive_ratio_observed": 0.074738,
+      "negative_ratio_observed": 0.925262,
+      "positive_ratio_total": 0.04948,
+      "negative_ratio_total": 0.612568,
+      "missing_ratio_total": 0.337952
+    }
+  },
+  "HBsAb": {
+    "2w-1m": {
+      "positive_patients": 167,
+      "negative_patients": 52,
+      "missing_patients": 3823,
+      "observed_patients": 219,
+      "positive_ratio_observed": 0.762557,
+      "negative_ratio_observed": 0.237443,
+      "positive_ratio_total": 0.041316,
+      "negative_ratio_total": 0.012865,
+      "missing_ratio_total": 0.945819
+    },
+    "2m-6m": {
+      "positive_patients": 2003,
+      "negative_patients": 541,
+      "missing_patients": 1498,
+      "observed_patients": 2544,
+      "positive_ratio_observed": 0.787343,
+      "negative_ratio_observed": 0.212657,
+      "positive_ratio_total": 0.495547,
+      "negative_ratio_total": 0.133845,
+      "missing_ratio_total": 0.370609
+    },
+    "7m-12m": {
+      "positive_patients": 1156,
+      "negative_patients": 989,
+      "missing_patients": 1897,
+      "observed_patients": 2145,
+      "positive_ratio_observed": 0.538928,
+      "negative_ratio_observed": 0.461072,
+      "positive_ratio_total": 0.285997,
+      "negative_ratio_total": 0.244681,
+      "missing_ratio_total": 0.469322
+    },
+    "13m-14m": {
+      "positive_patients": 356,
+      "negative_patients": 462,
+      "missing_patients": 3224,
+      "observed_patients": 818,
+      "positive_ratio_observed": 0.435208,
+      "negative_ratio_observed": 0.564792,
+      "positive_ratio_total": 0.088075,
+      "negative_ratio_total": 0.1143,
+      "missing_ratio_total": 0.797625
+    },
+    "15m-24m": {
+      "positive_patients": 1259,
+      "negative_patients": 824,
+      "missing_patients": 1959,
+      "observed_patients": 2083,
+      "positive_ratio_observed": 0.604417,
+      "negative_ratio_observed": 0.395583,
+      "positive_ratio_total": 0.311479,
+      "negative_ratio_total": 0.203859,
+      "missing_ratio_total": 0.484661
+    },
+    "2y+": {
+      "positive_patients": 2157,
+      "negative_patients": 550,
+      "missing_patients": 1335,
+      "observed_patients": 2707,
+      "positive_ratio_observed": 0.796823,
+      "negative_ratio_observed": 0.203177,
+      "positive_ratio_total": 0.533647,
+      "negative_ratio_total": 0.136071,
+      "missing_ratio_total": 0.330282
+    }
+  },
+  "HBsAg": {
+    "2w-1m": {
+      "positive_patients": 2,
+      "negative_patients": 210,
+      "missing_patients": 3830,
+      "observed_patients": 212,
+      "positive_ratio_observed": 0.009434,
+      "negative_ratio_observed": 0.990566,
+      "positive_ratio_total": 0.000495,
+      "negative_ratio_total": 0.051954,
+      "missing_ratio_total": 0.947551
+    },
+    "2m-6m": {
+      "positive_patients": 33,
+      "negative_patients": 2453,
+      "missing_patients": 1556,
+      "observed_patients": 2486,
+      "positive_ratio_observed": 0.013274,
+      "negative_ratio_observed": 0.986726,
+      "positive_ratio_total": 0.008164,
+      "negative_ratio_total": 0.606878,
+      "missing_ratio_total": 0.384958
+    },
+    "7m-12m": {
+      "positive_patients": 67,
+      "negative_patients": 2038,
+      "missing_patients": 1937,
+      "observed_patients": 2105,
+      "positive_ratio_observed": 0.031829,
+      "negative_ratio_observed": 0.968171,
+      "positive_ratio_total": 0.016576,
+      "negative_ratio_total": 0.504206,
+      "missing_ratio_total": 0.479218
+    },
+    "13m-14m": {
+      "positive_patients": 23,
+      "negative_patients": 786,
+      "missing_patients": 3233,
+      "observed_patients": 809,
+      "positive_ratio_observed": 0.02843,
+      "negative_ratio_observed": 0.97157,
+      "positive_ratio_total": 0.00569,
+      "negative_ratio_total": 0.194458,
+      "missing_ratio_total": 0.799852
+    },
+    "15m-24m": {
+      "positive_patients": 119,
+      "negative_patients": 1883,
+      "missing_patients": 2040,
+      "observed_patients": 2002,
+      "positive_ratio_observed": 0.059441,
+      "negative_ratio_observed": 0.940559,
+      "positive_ratio_total": 0.029441,
+      "negative_ratio_total": 0.465858,
+      "missing_ratio_total": 0.504701
+    },
+    "2y+": {
+      "positive_patients": 253,
+      "negative_patients": 2439,
+      "missing_patients": 1350,
+      "observed_patients": 2692,
+      "positive_ratio_observed": 0.093982,
+      "negative_ratio_observed": 0.906018,
+      "positive_ratio_total": 0.062593,
+      "negative_ratio_total": 0.603414,
+      "missing_ratio_total": 0.333993
+    }
+  },
+  "INR": {
+    "2w-1m": {
+      "positive_patients": 858,
+      "negative_patients": 390,
+      "missing_patients": 2794,
+      "observed_patients": 1248,
+      "positive_ratio_observed": 0.6875,
+      "negative_ratio_observed": 0.3125,
+      "positive_ratio_total": 0.212271,
+      "negative_ratio_total": 0.096487,
+      "missing_ratio_total": 0.691242
+    },
+    "2m-6m": {
+      "positive_patients": 1179,
+      "negative_patients": 1290,
+      "missing_patients": 1573,
+      "observed_patients": 2469,
+      "positive_ratio_observed": 0.477521,
+      "negative_ratio_observed": 0.522479,
+      "positive_ratio_total": 0.291687,
+      "negative_ratio_total": 0.319149,
+      "missing_ratio_total": 0.389164
+    },
+    "7m-12m": {
+      "positive_patients": 774,
+      "negative_patients": 1133,
+      "missing_patients": 2135,
+      "observed_patients": 1907,
+      "positive_ratio_observed": 0.405873,
+      "negative_ratio_observed": 0.594127,
+      "positive_ratio_total": 0.191489,
+      "negative_ratio_total": 0.280307,
+      "missing_ratio_total": 0.528204
+    },
+    "13m-14m": {
+      "positive_patients": 219,
+      "negative_patients": 526,
+      "missing_patients": 3297,
+      "observed_patients": 745,
+      "positive_ratio_observed": 0.29396,
+      "negative_ratio_observed": 0.70604,
+      "positive_ratio_total": 0.054181,
+      "negative_ratio_total": 0.130134,
+      "missing_ratio_total": 0.815685
+    },
+    "15m-24m": {
+      "positive_patients": 428,
+      "negative_patients": 1012,
+      "missing_patients": 2602,
+      "observed_patients": 1440,
+      "positive_ratio_observed": 0.297222,
+      "negative_ratio_observed": 0.702778,
+      "positive_ratio_total": 0.105888,
+      "negative_ratio_total": 0.250371,
+      "missing_ratio_total": 0.643741
+    },
+    "2y+": {
+      "positive_patients": 583,
+      "negative_patients": 1316,
+      "missing_patients": 2143,
+      "observed_patients": 1899,
+      "positive_ratio_observed": 0.307004,
+      "negative_ratio_observed": 0.692996,
+      "positive_ratio_total": 0.144236,
+      "negative_ratio_total": 0.325581,
+      "missing_ratio_total": 0.530183
+    }
+  },
+  "N(%)": {
+    "2w-1m": {
+      "positive_patients": 1227,
+      "negative_patients": 2675,
+      "missing_patients": 140,
+      "observed_patients": 3902,
+      "positive_ratio_observed": 0.314454,
+      "negative_ratio_observed": 0.685546,
+      "positive_ratio_total": 0.303563,
+      "negative_ratio_total": 0.661801,
+      "missing_ratio_total": 0.034636
+    },
+    "2m-6m": {
+      "positive_patients": 1559,
+      "negative_patients": 2281,
+      "missing_patients": 202,
+      "observed_patients": 3840,
+      "positive_ratio_observed": 0.40599,
+      "negative_ratio_observed": 0.59401,
+      "positive_ratio_total": 0.3857,
+      "negative_ratio_total": 0.564325,
+      "missing_ratio_total": 0.049975
+    },
+    "7m-12m": {
+      "positive_patients": 1090,
+      "negative_patients": 2388,
+      "missing_patients": 564,
+      "observed_patients": 3478,
+      "positive_ratio_observed": 0.313399,
+      "negative_ratio_observed": 0.686601,
+      "positive_ratio_total": 0.269668,
+      "negative_ratio_total": 0.590797,
+      "missing_ratio_total": 0.139535
+    },
+    "13m-14m": {
+      "positive_patients": 252,
+      "negative_patients": 2104,
+      "missing_patients": 1686,
+      "observed_patients": 2356,
+      "positive_ratio_observed": 0.106961,
+      "negative_ratio_observed": 0.893039,
+      "positive_ratio_total": 0.062345,
+      "negative_ratio_total": 0.520534,
+      "missing_ratio_total": 0.41712
+    },
+    "15m-24m": {
+      "positive_patients": 1274,
+      "negative_patients": 1912,
+      "missing_patients": 856,
+      "observed_patients": 3186,
+      "positive_ratio_observed": 0.399874,
+      "negative_ratio_observed": 0.600126,
+      "positive_ratio_total": 0.31519,
+      "negative_ratio_total": 0.473033,
+      "missing_ratio_total": 0.211776
+    },
+    "2y+": {
+      "positive_patients": 1737,
+      "negative_patients": 1147,
+      "missing_patients": 1158,
+      "observed_patients": 2884,
+      "positive_ratio_observed": 0.602288,
+      "negative_ratio_observed": 0.397712,
+      "positive_ratio_total": 0.429738,
+      "negative_ratio_total": 0.28377,
+      "missing_ratio_total": 0.286492
+    }
+  },
+  "PLT": {
+    "2w-1m": {
+      "positive_patients": 2027,
+      "negative_patients": 1882,
+      "missing_patients": 133,
+      "observed_patients": 3909,
+      "positive_ratio_observed": 0.518547,
+      "negative_ratio_observed": 0.481453,
+      "positive_ratio_total": 0.501484,
+      "negative_ratio_total": 0.465611,
+      "missing_ratio_total": 0.032905
+    },
+    "2m-6m": {
+      "positive_patients": 2607,
+      "negative_patients": 1241,
+      "missing_patients": 194,
+      "observed_patients": 3848,
+      "positive_ratio_observed": 0.677495,
+      "negative_ratio_observed": 0.322505,
+      "positive_ratio_total": 0.644978,
+      "negative_ratio_total": 0.307026,
+      "missing_ratio_total": 0.047996
+    },
+    "7m-12m": {
+      "positive_patients": 2031,
+      "negative_patients": 1476,
+      "missing_patients": 535,
+      "observed_patients": 3507,
+      "positive_ratio_observed": 0.579127,
+      "negative_ratio_observed": 0.420873,
+      "positive_ratio_total": 0.502474,
+      "negative_ratio_total": 0.365166,
+      "missing_ratio_total": 0.13236
+    },
+    "13m-14m": {
+      "positive_patients": 778,
+      "negative_patients": 1615,
+      "missing_patients": 1649,
+      "observed_patients": 2393,
+      "positive_ratio_observed": 0.325115,
+      "negative_ratio_observed": 0.674885,
+      "positive_ratio_total": 0.192479,
+      "negative_ratio_total": 0.399555,
+      "missing_ratio_total": 0.407966
+    },
+    "15m-24m": {
+      "positive_patients": 1823,
+      "negative_patients": 1389,
+      "missing_patients": 830,
+      "observed_patients": 3212,
+      "positive_ratio_observed": 0.567559,
+      "negative_ratio_observed": 0.432441,
+      "positive_ratio_total": 0.451014,
+      "negative_ratio_total": 0.343642,
+      "missing_ratio_total": 0.205344
+    },
+    "2y+": {
+      "positive_patients": 1795,
+      "negative_patients": 1089,
+      "missing_patients": 1158,
+      "observed_patients": 2884,
+      "positive_ratio_observed": 0.622399,
+      "negative_ratio_observed": 0.377601,
+      "positive_ratio_total": 0.444087,
+      "negative_ratio_total": 0.269421,
+      "missing_ratio_total": 0.286492
+    }
+  },
+  "PT": {
+    "2w-1m": {
+      "positive_patients": 1135,
+      "negative_patients": 320,
+      "missing_patients": 2587,
+      "observed_patients": 1455,
+      "positive_ratio_observed": 0.780069,
+      "negative_ratio_observed": 0.219931,
+      "positive_ratio_total": 0.280802,
+      "negative_ratio_total": 0.079169,
+      "missing_ratio_total": 0.64003
+    },
+    "2m-6m": {
+      "positive_patients": 1704,
+      "negative_patients": 962,
+      "missing_patients": 1376,
+      "observed_patients": 2666,
+      "positive_ratio_observed": 0.63916,
+      "negative_ratio_observed": 0.36084,
+      "positive_ratio_total": 0.421573,
+      "negative_ratio_total": 0.238001,
+      "missing_ratio_total": 0.340426
+    },
+    "7m-12m": {
+      "positive_patients": 1333,
+      "negative_patients": 757,
+      "missing_patients": 1952,
+      "observed_patients": 2090,
+      "positive_ratio_observed": 0.637799,
+      "negative_ratio_observed": 0.362201,
+      "positive_ratio_total": 0.329787,
+      "negative_ratio_total": 0.187284,
+      "missing_ratio_total": 0.482929
+    },
+    "13m-14m": {
+      "positive_patients": 425,
+      "negative_patients": 395,
+      "missing_patients": 3222,
+      "observed_patients": 820,
+      "positive_ratio_observed": 0.518293,
+      "negative_ratio_observed": 0.481707,
+      "positive_ratio_total": 0.105146,
+      "negative_ratio_total": 0.097724,
+      "missing_ratio_total": 0.79713
+    },
+    "15m-24m": {
+      "positive_patients": 870,
+      "negative_patients": 735,
+      "missing_patients": 2437,
+      "observed_patients": 1605,
+      "positive_ratio_observed": 0.542056,
+      "negative_ratio_observed": 0.457944,
+      "positive_ratio_total": 0.21524,
+      "negative_ratio_total": 0.181841,
+      "missing_ratio_total": 0.602919
+    },
+    "2y+": {
+      "positive_patients": 1122,
+      "negative_patients": 876,
+      "missing_patients": 2044,
+      "observed_patients": 1998,
+      "positive_ratio_observed": 0.561562,
+      "negative_ratio_observed": 0.438438,
+      "positive_ratio_total": 0.277585,
+      "negative_ratio_total": 0.216724,
+      "missing_ratio_total": 0.50569
+    }
+  },
+  "TB": {
+    "2w-1m": {
+      "positive_patients": 612,
+      "negative_patients": 3307,
+      "missing_patients": 123,
+      "observed_patients": 3919,
+      "positive_ratio_observed": 0.156162,
+      "negative_ratio_observed": 0.843838,
+      "positive_ratio_total": 0.15141,
+      "negative_ratio_total": 0.818159,
+      "missing_ratio_total": 0.03043
+    },
+    "2m-6m": {
+      "positive_patients": 560,
+      "negative_patients": 3290,
+      "missing_patients": 192,
+      "observed_patients": 3850,
+      "positive_ratio_observed": 0.145455,
+      "negative_ratio_observed": 0.854545,
+      "positive_ratio_total": 0.138545,
+      "negative_ratio_total": 0.813953,
+      "missing_ratio_total": 0.047501
+    },
+    "7m-12m": {
+      "positive_patients": 288,
+      "negative_patients": 3257,
+      "missing_patients": 497,
+      "observed_patients": 3545,
+      "positive_ratio_observed": 0.081241,
+      "negative_ratio_observed": 0.918759,
+      "positive_ratio_total": 0.071252,
+      "negative_ratio_total": 0.805789,
+      "missing_ratio_total": 0.122959
+    },
+    "13m-14m": {
+      "positive_patients": 90,
+      "negative_patients": 2489,
+      "missing_patients": 1463,
+      "observed_patients": 2579,
+      "positive_ratio_observed": 0.034897,
+      "negative_ratio_observed": 0.965103,
+      "positive_ratio_total": 0.022266,
+      "negative_ratio_total": 0.615784,
+      "missing_ratio_total": 0.36195
+    },
+    "15m-24m": {
+      "positive_patients": 290,
+      "negative_patients": 2962,
+      "missing_patients": 790,
+      "observed_patients": 3252,
+      "positive_ratio_observed": 0.089176,
+      "negative_ratio_observed": 0.910824,
+      "positive_ratio_total": 0.071747,
+      "negative_ratio_total": 0.732806,
+      "missing_ratio_total": 0.195448
+    },
+    "2y+": {
+      "positive_patients": 606,
+      "negative_patients": 2291,
+      "missing_patients": 1145,
+      "observed_patients": 2897,
+      "positive_ratio_observed": 0.209182,
+      "negative_ratio_observed": 0.790818,
+      "positive_ratio_total": 0.149926,
+      "negative_ratio_total": 0.566799,
+      "missing_ratio_total": 0.283276
+    }
+  },
+  "TP": {
+    "2w-1m": {
+      "positive_patients": 2356,
+      "negative_patients": 1563,
+      "missing_patients": 123,
+      "observed_patients": 3919,
+      "positive_ratio_observed": 0.601174,
+      "negative_ratio_observed": 0.398826,
+      "positive_ratio_total": 0.58288,
+      "negative_ratio_total": 0.38669,
+      "missing_ratio_total": 0.03043
+    },
+    "2m-6m": {
+      "positive_patients": 2871,
+      "negative_patients": 978,
+      "missing_patients": 193,
+      "observed_patients": 3849,
+      "positive_ratio_observed": 0.745908,
+      "negative_ratio_observed": 0.254092,
+      "positive_ratio_total": 0.710292,
+      "negative_ratio_total": 0.241959,
+      "missing_ratio_total": 0.047749
+    },
+    "7m-12m": {
+      "positive_patients": 1925,
+      "negative_patients": 1618,
+      "missing_patients": 499,
+      "observed_patients": 3543,
+      "positive_ratio_observed": 0.543325,
+      "negative_ratio_observed": 0.456675,
+      "positive_ratio_total": 0.476249,
+      "negative_ratio_total": 0.400297,
+      "missing_ratio_total": 0.123454
+    },
+    "13m-14m": {
+      "positive_patients": 473,
+      "negative_patients": 2092,
+      "missing_patients": 1477,
+      "observed_patients": 2565,
+      "positive_ratio_observed": 0.184405,
+      "negative_ratio_observed": 0.815595,
+      "positive_ratio_total": 0.117021,
+      "negative_ratio_total": 0.517566,
+      "missing_ratio_total": 0.365413
+    },
+    "15m-24m": {
+      "positive_patients": 1408,
+      "negative_patients": 1840,
+      "missing_patients": 794,
+      "observed_patients": 3248,
+      "positive_ratio_observed": 0.433498,
+      "negative_ratio_observed": 0.566502,
+      "positive_ratio_total": 0.348342,
+      "negative_ratio_total": 0.45522,
+      "missing_ratio_total": 0.196437
+    },
+    "2y+": {
+      "positive_patients": 1754,
+      "negative_patients": 1141,
+      "missing_patients": 1147,
+      "observed_patients": 2895,
+      "positive_ratio_observed": 0.605872,
+      "negative_ratio_observed": 0.394128,
+      "positive_ratio_total": 0.433944,
+      "negative_ratio_total": 0.282286,
+      "missing_ratio_total": 0.28377
+    }
+  },
+  "WBC": {
+    "2w-1m": {
+      "positive_patients": 2079,
+      "negative_patients": 1828,
+      "missing_patients": 135,
+      "observed_patients": 3907,
+      "positive_ratio_observed": 0.532122,
+      "negative_ratio_observed": 0.467878,
+      "positive_ratio_total": 0.514349,
+      "negative_ratio_total": 0.452251,
+      "missing_ratio_total": 0.033399
+    },
+    "2m-6m": {
+      "positive_patients": 2449,
+      "negative_patients": 1397,
+      "missing_patients": 196,
+      "observed_patients": 3846,
+      "positive_ratio_observed": 0.636765,
+      "negative_ratio_observed": 0.363235,
+      "positive_ratio_total": 0.605888,
+      "negative_ratio_total": 0.345621,
+      "missing_ratio_total": 0.048491
+    },
+    "7m-12m": {
+      "positive_patients": 1789,
+      "negative_patients": 1720,
+      "missing_patients": 533,
+      "observed_patients": 3509,
+      "positive_ratio_observed": 0.509832,
+      "negative_ratio_observed": 0.490168,
+      "positive_ratio_total": 0.442603,
+      "negative_ratio_total": 0.425532,
+      "missing_ratio_total": 0.131865
+    },
+    "13m-14m": {
+      "positive_patients": 507,
+      "negative_patients": 1892,
+      "missing_patients": 1643,
+      "observed_patients": 2399,
+      "positive_ratio_observed": 0.211338,
+      "negative_ratio_observed": 0.788662,
+      "positive_ratio_total": 0.125433,
+      "negative_ratio_total": 0.468085,
+      "missing_ratio_total": 0.406482
+    },
+    "15m-24m": {
+      "positive_patients": 1645,
+      "negative_patients": 1568,
+      "missing_patients": 829,
+      "observed_patients": 3213,
+      "positive_ratio_observed": 0.511983,
+      "negative_ratio_observed": 0.488017,
+      "positive_ratio_total": 0.406977,
+      "negative_ratio_total": 0.387927,
+      "missing_ratio_total": 0.205096
+    },
+    "2y+": {
+      "positive_patients": 1941,
+      "negative_patients": 942,
+      "missing_patients": 1159,
+      "observed_patients": 2883,
+      "positive_ratio_observed": 0.673257,
+      "negative_ratio_observed": 0.326743,
+      "positive_ratio_total": 0.480208,
+      "negative_ratio_total": 0.233053,
+      "missing_ratio_total": 0.286739
+    }
+  },
+  "γ-GT": {
+    "2w-1m": {
+      "positive_patients": 3400,
+      "negative_patients": 516,
+      "missing_patients": 126,
+      "observed_patients": 3916,
+      "positive_ratio_observed": 0.868233,
+      "negative_ratio_observed": 0.131767,
+      "positive_ratio_total": 0.841168,
+      "negative_ratio_total": 0.12766,
+      "missing_ratio_total": 0.031173
+    },
+    "2m-6m": {
+      "positive_patients": 3469,
+      "negative_patients": 379,
+      "missing_patients": 194,
+      "observed_patients": 3848,
+      "positive_ratio_observed": 0.901507,
+      "negative_ratio_observed": 0.098493,
+      "positive_ratio_total": 0.858238,
+      "negative_ratio_total": 0.093765,
+      "missing_ratio_total": 0.047996
+    },
+    "7m-12m": {
+      "positive_patients": 2230,
+      "negative_patients": 1306,
+      "missing_patients": 506,
+      "observed_patients": 3536,
+      "positive_ratio_observed": 0.630656,
+      "negative_ratio_observed": 0.369344,
+      "positive_ratio_total": 0.551707,
+      "negative_ratio_total": 0.323107,
+      "missing_ratio_total": 0.125186
+    },
+    "13m-14m": {
+      "positive_patients": 923,
+      "negative_patients": 1608,
+      "missing_patients": 1511,
+      "observed_patients": 2531,
+      "positive_ratio_observed": 0.364678,
+      "negative_ratio_observed": 0.635322,
+      "positive_ratio_total": 0.228352,
+      "negative_ratio_total": 0.397823,
+      "missing_ratio_total": 0.373825
+    },
+    "15m-24m": {
+      "positive_patients": 1703,
+      "negative_patients": 1528,
+      "missing_patients": 811,
+      "observed_patients": 3231,
+      "positive_ratio_observed": 0.527081,
+      "negative_ratio_observed": 0.472919,
+      "positive_ratio_total": 0.421326,
+      "negative_ratio_total": 0.378031,
+      "missing_ratio_total": 0.200643
+    },
+    "2y+": {
+      "positive_patients": 1829,
+      "negative_patients": 1064,
+      "missing_patients": 1149,
+      "observed_patients": 2893,
+      "positive_ratio_observed": 0.632216,
+      "negative_ratio_observed": 0.367784,
+      "positive_ratio_total": 0.452499,
+      "negative_ratio_total": 0.263236,
+      "missing_ratio_total": 0.284265
+    }
+  },
+  "他克莫司浓度": {
+    "2w-1m": {
+      "positive_patients": 24,
+      "negative_patients": 3630,
+      "missing_patients": 388,
+      "observed_patients": 3654,
+      "positive_ratio_observed": 0.006568,
+      "negative_ratio_observed": 0.993432,
+      "positive_ratio_total": 0.005938,
+      "negative_ratio_total": 0.89807,
+      "missing_ratio_total": 0.095992
+    },
+    "2m-6m": {
+      "positive_patients": 66,
+      "negative_patients": 3373,
+      "missing_patients": 603,
+      "observed_patients": 3439,
+      "positive_ratio_observed": 0.019192,
+      "negative_ratio_observed": 0.980808,
+      "positive_ratio_total": 0.016329,
+      "negative_ratio_total": 0.834488,
+      "missing_ratio_total": 0.149184
+    },
+    "7m-12m": {
+      "positive_patients": 71,
+      "negative_patients": 2858,
+      "missing_patients": 1113,
+      "observed_patients": 2929,
+      "positive_ratio_observed": 0.02424,
+      "negative_ratio_observed": 0.97576,
+      "positive_ratio_total": 0.017566,
+      "negative_ratio_total": 0.707076,
+      "missing_ratio_total": 0.275359
+    },
+    "13m-14m": {
+      "positive_patients": 12,
+      "negative_patients": 1953,
+      "missing_patients": 2077,
+      "observed_patients": 1965,
+      "positive_ratio_observed": 0.006107,
+      "negative_ratio_observed": 0.993893,
+      "positive_ratio_total": 0.002969,
+      "negative_ratio_total": 0.483177,
+      "missing_ratio_total": 0.513855
+    },
+    "15m-24m": {
+      "positive_patients": 150,
+      "negative_patients": 2629,
+      "missing_patients": 1263,
+      "observed_patients": 2779,
+      "positive_ratio_observed": 0.053976,
+      "negative_ratio_observed": 0.946024,
+      "positive_ratio_total": 0.03711,
+      "negative_ratio_total": 0.650421,
+      "missing_ratio_total": 0.312469
+    },
+    "2y+": {
+      "positive_patients": 297,
+      "negative_patients": 2390,
+      "missing_patients": 1355,
+      "observed_patients": 2687,
+      "positive_ratio_observed": 0.110532,
+      "negative_ratio_observed": 0.889468,
+      "positive_ratio_total": 0.073478,
+      "negative_ratio_total": 0.591291,
+      "missing_ratio_total": 0.33523
+    }
+  },
+  "嗜酸性粒细胞百分比": {
+    "2w-1m": {
+      "positive_patients": 2568,
+      "negative_patients": 13,
+      "missing_patients": 1461,
+      "observed_patients": 2581,
+      "positive_ratio_observed": 0.994963,
+      "negative_ratio_observed": 0.005037,
+      "positive_ratio_total": 0.635329,
+      "negative_ratio_total": 0.003216,
+      "missing_ratio_total": 0.361455
+    },
+    "2m-6m": {
+      "positive_patients": 2593,
+      "negative_patients": 5,
+      "missing_patients": 1444,
+      "observed_patients": 2598,
+      "positive_ratio_observed": 0.998075,
+      "negative_ratio_observed": 0.001925,
+      "positive_ratio_total": 0.641514,
+      "negative_ratio_total": 0.001237,
+      "missing_ratio_total": 0.357249
+    },
+    "7m-12m": {
+      "positive_patients": 1909,
+      "negative_patients": 5,
+      "missing_patients": 2128,
+      "observed_patients": 1914,
+      "positive_ratio_observed": 0.997388,
+      "negative_ratio_observed": 0.002612,
+      "positive_ratio_total": 0.472291,
+      "negative_ratio_total": 0.001237,
+      "missing_ratio_total": 0.526472
+    },
+    "13m-14m": {
+      "positive_patients": 904,
+      "negative_patients": 9,
+      "missing_patients": 3129,
+      "observed_patients": 913,
+      "positive_ratio_observed": 0.990142,
+      "negative_ratio_observed": 0.009858,
+      "positive_ratio_total": 0.223652,
+      "negative_ratio_total": 0.002227,
+      "missing_ratio_total": 0.774122
+    },
+    "15m-24m": {
+      "positive_patients": 1603,
+      "negative_patients": 11,
+      "missing_patients": 2428,
+      "observed_patients": 1614,
+      "positive_ratio_observed": 0.993185,
+      "negative_ratio_observed": 0.006815,
+      "positive_ratio_total": 0.396586,
+      "negative_ratio_total": 0.002721,
+      "missing_ratio_total": 0.600693
+    },
+    "2y+": {
+      "positive_patients": 2748,
+      "negative_patients": 3,
+      "missing_patients": 1291,
+      "observed_patients": 2751,
+      "positive_ratio_observed": 0.998909,
+      "negative_ratio_observed": 0.001091,
+      "positive_ratio_total": 0.679861,
+      "negative_ratio_total": 0.000742,
+      "missing_ratio_total": 0.319396
+    }
+  },
+  "尿酸": {
+    "2w-1m": {
+      "positive_patients": 1315,
+      "negative_patients": 1981,
+      "missing_patients": 746,
+      "observed_patients": 3296,
+      "positive_ratio_observed": 0.398968,
+      "negative_ratio_observed": 0.601032,
+      "positive_ratio_total": 0.325334,
+      "negative_ratio_total": 0.490104,
+      "missing_ratio_total": 0.184562
+    },
+    "2m-6m": {
+      "positive_patients": 1418,
+      "negative_patients": 1921,
+      "missing_patients": 703,
+      "observed_patients": 3339,
+      "positive_ratio_observed": 0.424678,
+      "negative_ratio_observed": 0.575322,
+      "positive_ratio_total": 0.350816,
+      "negative_ratio_total": 0.47526,
+      "missing_ratio_total": 0.173924
+    },
+    "7m-12m": {
+      "positive_patients": 821,
+      "negative_patients": 1875,
+      "missing_patients": 1346,
+      "observed_patients": 2696,
+      "positive_ratio_observed": 0.304525,
+      "negative_ratio_observed": 0.695475,
+      "positive_ratio_total": 0.203117,
+      "negative_ratio_total": 0.463879,
+      "missing_ratio_total": 0.333003
+    },
+    "13m-14m": {
+      "positive_patients": 234,
+      "negative_patients": 1332,
+      "missing_patients": 2476,
+      "observed_patients": 1566,
+      "positive_ratio_observed": 0.149425,
+      "negative_ratio_observed": 0.850575,
+      "positive_ratio_total": 0.057892,
+      "negative_ratio_total": 0.32954,
+      "missing_ratio_total": 0.612568
+    },
+    "15m-24m": {
+      "positive_patients": 734,
+      "negative_patients": 1669,
+      "missing_patients": 1639,
+      "observed_patients": 2403,
+      "positive_ratio_observed": 0.305452,
+      "negative_ratio_observed": 0.694548,
+      "positive_ratio_total": 0.181593,
+      "negative_ratio_total": 0.412914,
+      "missing_ratio_total": 0.405492
+    },
+    "2y+": {
+      "positive_patients": 1184,
+      "negative_patients": 1604,
+      "missing_patients": 1254,
+      "observed_patients": 2788,
+      "positive_ratio_observed": 0.424677,
+      "negative_ratio_observed": 0.575323,
+      "positive_ratio_total": 0.292924,
+      "negative_ratio_total": 0.396833,
+      "missing_ratio_total": 0.310242
+    }
+  },
+  "总胆固醇": {
+    "2w-1m": {
+      "positive_patients": 78,
+      "negative_patients": 2515,
+      "missing_patients": 1449,
+      "observed_patients": 2593,
+      "positive_ratio_observed": 0.030081,
+      "negative_ratio_observed": 0.969919,
+      "positive_ratio_total": 0.019297,
+      "negative_ratio_total": 0.622217,
+      "missing_ratio_total": 0.358486
+    },
+    "2m-6m": {
+      "positive_patients": 235,
+      "negative_patients": 2368,
+      "missing_patients": 1439,
+      "observed_patients": 2603,
+      "positive_ratio_observed": 0.09028,
+      "negative_ratio_observed": 0.90972,
+      "positive_ratio_total": 0.05814,
+      "negative_ratio_total": 0.585849,
+      "missing_ratio_total": 0.356012
+    },
+    "7m-12m": {
+      "positive_patients": 101,
+      "negative_patients": 1879,
+      "missing_patients": 2062,
+      "observed_patients": 1980,
+      "positive_ratio_observed": 0.05101,
+      "negative_ratio_observed": 0.94899,
+      "positive_ratio_total": 0.024988,
+      "negative_ratio_total": 0.464869,
+      "missing_ratio_total": 0.510143
+    },
+    "13m-14m": {
+      "positive_patients": 33,
+      "negative_patients": 921,
+      "missing_patients": 3088,
+      "observed_patients": 954,
+      "positive_ratio_observed": 0.034591,
+      "negative_ratio_observed": 0.965409,
+      "positive_ratio_total": 0.008164,
+      "negative_ratio_total": 0.227857,
+      "missing_ratio_total": 0.763978
+    },
+    "15m-24m": {
+      "positive_patients": 95,
+      "negative_patients": 1523,
+      "missing_patients": 2424,
+      "observed_patients": 1618,
+      "positive_ratio_observed": 0.058714,
+      "negative_ratio_observed": 0.941286,
+      "positive_ratio_total": 0.023503,
+      "negative_ratio_total": 0.376794,
+      "missing_ratio_total": 0.599703
+    },
+    "2y+": {
+      "positive_patients": 257,
+      "negative_patients": 2151,
+      "missing_patients": 1634,
+      "observed_patients": 2408,
+      "positive_ratio_observed": 0.106728,
+      "negative_ratio_observed": 0.893272,
+      "positive_ratio_total": 0.063582,
+      "negative_ratio_total": 0.532162,
+      "missing_ratio_total": 0.404255
+    }
+  },
+  "淋巴细胞绝对值": {
+    "2w-1m": {
+      "positive_patients": 1428,
+      "negative_patients": 1163,
+      "missing_patients": 1451,
+      "observed_patients": 2591,
+      "positive_ratio_observed": 0.551139,
+      "negative_ratio_observed": 0.448861,
+      "positive_ratio_total": 0.35329,
+      "negative_ratio_total": 0.287729,
+      "missing_ratio_total": 0.358981
+    },
+    "2m-6m": {
+      "positive_patients": 1378,
+      "negative_patients": 1223,
+      "missing_patients": 1441,
+      "observed_patients": 2601,
+      "positive_ratio_observed": 0.529796,
+      "negative_ratio_observed": 0.470204,
+      "positive_ratio_total": 0.34092,
+      "negative_ratio_total": 0.302573,
+      "missing_ratio_total": 0.356507
+    },
+    "7m-12m": {
+      "positive_patients": 618,
+      "negative_patients": 1327,
+      "missing_patients": 2097,
+      "observed_patients": 1945,
+      "positive_ratio_observed": 0.317738,
+      "negative_ratio_observed": 0.682262,
+      "positive_ratio_total": 0.152895,
+      "negative_ratio_total": 0.328303,
+      "missing_ratio_total": 0.518803
+    },
+    "13m-14m": {
+      "positive_patients": 169,
+      "negative_patients": 787,
+      "missing_patients": 3086,
+      "observed_patients": 956,
+      "positive_ratio_observed": 0.176778,
+      "negative_ratio_observed": 0.823222,
+      "positive_ratio_total": 0.041811,
+      "negative_ratio_total": 0.194706,
+      "missing_ratio_total": 0.763483
+    },
+    "15m-24m": {
+      "positive_patients": 547,
+      "negative_patients": 1092,
+      "missing_patients": 2403,
+      "observed_patients": 1639,
+      "positive_ratio_observed": 0.33374,
+      "negative_ratio_observed": 0.66626,
+      "positive_ratio_total": 0.135329,
+      "negative_ratio_total": 0.270163,
+      "missing_ratio_total": 0.594508
+    },
+    "2y+": {
+      "positive_patients": 1113,
+      "negative_patients": 1659,
+      "missing_patients": 1270,
+      "observed_patients": 2772,
+      "positive_ratio_observed": 0.401515,
+      "negative_ratio_observed": 0.598485,
+      "positive_ratio_total": 0.275359,
+      "negative_ratio_total": 0.41044,
+      "missing_ratio_total": 0.314201
+    }
+  },
+  "环孢素峰浓度": {
+    "2w-1m": {
+      "positive_patients": 331,
+      "negative_patients": 82,
+      "missing_patients": 3629,
+      "observed_patients": 413,
+      "positive_ratio_observed": 0.801453,
+      "negative_ratio_observed": 0.198547,
+      "positive_ratio_total": 0.08189,
+      "negative_ratio_total": 0.020287,
+      "missing_ratio_total": 0.897823
+    },
+    "2m-6m": {
+      "positive_patients": 597,
+      "negative_patients": 70,
+      "missing_patients": 3375,
+      "observed_patients": 667,
+      "positive_ratio_observed": 0.895052,
+      "negative_ratio_observed": 0.104948,
+      "positive_ratio_total": 0.147699,
+      "negative_ratio_total": 0.017318,
+      "missing_ratio_total": 0.834983
+    },
+    "7m-12m": {
+      "positive_patients": 248,
+      "negative_patients": 154,
+      "missing_patients": 3640,
+      "observed_patients": 402,
+      "positive_ratio_observed": 0.616915,
+      "negative_ratio_observed": 0.383085,
+      "positive_ratio_total": 0.061356,
+      "negative_ratio_total": 0.0381,
+      "missing_ratio_total": 0.900544
+    },
+    "13m-14m": {
+      "positive_patients": 58,
+      "negative_patients": 96,
+      "missing_patients": 3888,
+      "observed_patients": 154,
+      "positive_ratio_observed": 0.376623,
+      "negative_ratio_observed": 0.623377,
+      "positive_ratio_total": 0.014349,
+      "negative_ratio_total": 0.023751,
+      "missing_ratio_total": 0.9619
+    },
+    "15m-24m": {
+      "positive_patients": 154,
+      "negative_patients": 118,
+      "missing_patients": 3770,
+      "observed_patients": 272,
+      "positive_ratio_observed": 0.566176,
+      "negative_ratio_observed": 0.433824,
+      "positive_ratio_total": 0.0381,
+      "negative_ratio_total": 0.029193,
+      "missing_ratio_total": 0.932707
+    },
+    "2y+": {
+      "positive_patients": 170,
+      "negative_patients": 87,
+      "missing_patients": 3785,
+      "observed_patients": 257,
+      "positive_ratio_observed": 0.661479,
+      "negative_ratio_observed": 0.338521,
+      "positive_ratio_total": 0.042058,
+      "negative_ratio_total": 0.021524,
+      "missing_ratio_total": 0.936418
+    }
+  },
+  "环孢素谷浓度": {
+    "2w-1m": {
+      "positive_patients": 215,
+      "negative_patients": 249,
+      "missing_patients": 3578,
+      "observed_patients": 464,
+      "positive_ratio_observed": 0.463362,
+      "negative_ratio_observed": 0.536638,
+      "positive_ratio_total": 0.053191,
+      "negative_ratio_total": 0.061603,
+      "missing_ratio_total": 0.885205
+    },
+    "2m-6m": {
+      "positive_patients": 597,
+      "negative_patients": 199,
+      "missing_patients": 3246,
+      "observed_patients": 796,
+      "positive_ratio_observed": 0.75,
+      "negative_ratio_observed": 0.25,
+      "positive_ratio_total": 0.147699,
+      "negative_ratio_total": 0.049233,
+      "missing_ratio_total": 0.803068
+    },
+    "7m-12m": {
+      "positive_patients": 592,
+      "negative_patients": 151,
+      "missing_patients": 3299,
+      "observed_patients": 743,
+      "positive_ratio_observed": 0.79677,
+      "negative_ratio_observed": 0.20323,
+      "positive_ratio_total": 0.146462,
+      "negative_ratio_total": 0.037358,
+      "missing_ratio_total": 0.81618
+    },
+    "13m-14m": {
+      "positive_patients": 240,
+      "negative_patients": 194,
+      "missing_patients": 3608,
+      "observed_patients": 434,
+      "positive_ratio_observed": 0.552995,
+      "negative_ratio_observed": 0.447005,
+      "positive_ratio_total": 0.059377,
+      "negative_ratio_total": 0.047996,
+      "missing_ratio_total": 0.892627
+    },
+    "15m-24m": {
+      "positive_patients": 574,
+      "negative_patients": 53,
+      "missing_patients": 3415,
+      "observed_patients": 627,
+      "positive_ratio_observed": 0.91547,
+      "negative_ratio_observed": 0.08453,
+      "positive_ratio_total": 0.142009,
+      "negative_ratio_total": 0.013112,
+      "missing_ratio_total": 0.844879
+    },
+    "2y+": {
+      "positive_patients": 494,
+      "negative_patients": 22,
+      "missing_patients": 3526,
+      "observed_patients": 516,
+      "positive_ratio_observed": 0.957364,
+      "negative_ratio_observed": 0.042636,
+      "positive_ratio_total": 0.122217,
+      "negative_ratio_total": 0.005443,
+      "missing_ratio_total": 0.87234
+    }
+  },
+  "甘油三脂": {
+    "2w-1m": {
+      "positive_patients": 1436,
+      "negative_patients": 1157,
+      "missing_patients": 1449,
+      "observed_patients": 2593,
+      "positive_ratio_observed": 0.553799,
+      "negative_ratio_observed": 0.446201,
+      "positive_ratio_total": 0.35527,
+      "negative_ratio_total": 0.286244,
+      "missing_ratio_total": 0.358486
+    },
+    "2m-6m": {
+      "positive_patients": 1818,
+      "negative_patients": 785,
+      "missing_patients": 1439,
+      "observed_patients": 2603,
+      "positive_ratio_observed": 0.698425,
+      "negative_ratio_observed": 0.301575,
+      "positive_ratio_total": 0.449777,
+      "negative_ratio_total": 0.194211,
+      "missing_ratio_total": 0.356012
+    },
+    "7m-12m": {
+      "positive_patients": 718,
+      "negative_patients": 1258,
+      "missing_patients": 2066,
+      "observed_patients": 1976,
+      "positive_ratio_observed": 0.36336,
+      "negative_ratio_observed": 0.63664,
+      "positive_ratio_total": 0.177635,
+      "negative_ratio_total": 0.311232,
+      "missing_ratio_total": 0.511133
+    },
+    "13m-14m": {
+      "positive_patients": 143,
+      "negative_patients": 810,
+      "missing_patients": 3089,
+      "observed_patients": 953,
+      "positive_ratio_observed": 0.150052,
+      "negative_ratio_observed": 0.849948,
+      "positive_ratio_total": 0.035379,
+      "negative_ratio_total": 0.200396,
+      "missing_ratio_total": 0.764226
+    },
+    "15m-24m": {
+      "positive_patients": 398,
+      "negative_patients": 1217,
+      "missing_patients": 2427,
+      "observed_patients": 1615,
+      "positive_ratio_observed": 0.24644,
+      "negative_ratio_observed": 0.75356,
+      "positive_ratio_total": 0.098466,
+      "negative_ratio_total": 0.301089,
+      "missing_ratio_total": 0.600445
+    },
+    "2y+": {
+      "positive_patients": 537,
+      "negative_patients": 1869,
+      "missing_patients": 1636,
+      "observed_patients": 2406,
+      "positive_ratio_observed": 0.223192,
+      "negative_ratio_observed": 0.776808,
+      "positive_ratio_total": 0.132855,
+      "negative_ratio_total": 0.462395,
+      "missing_ratio_total": 0.40475
+    }
+  },
+  "胆汁酸": {
+    "2w-1m": {
+      "positive_patients": 2037,
+      "negative_patients": 1661,
+      "missing_patients": 344,
+      "observed_patients": 3698,
+      "positive_ratio_observed": 0.550838,
+      "negative_ratio_observed": 0.449162,
+      "positive_ratio_total": 0.503958,
+      "negative_ratio_total": 0.410935,
+      "missing_ratio_total": 0.085106
+    },
+    "2m-6m": {
+      "positive_patients": 2975,
+      "negative_patients": 718,
+      "missing_patients": 349,
+      "observed_patients": 3693,
+      "positive_ratio_observed": 0.805578,
+      "negative_ratio_observed": 0.194422,
+      "positive_ratio_total": 0.736022,
+      "negative_ratio_total": 0.177635,
+      "missing_ratio_total": 0.086343
+    },
+    "7m-12m": {
+      "positive_patients": 2538,
+      "negative_patients": 809,
+      "missing_patients": 695,
+      "observed_patients": 3347,
+      "positive_ratio_observed": 0.758291,
+      "negative_ratio_observed": 0.241709,
+      "positive_ratio_total": 0.627907,
+      "negative_ratio_total": 0.200148,
+      "missing_ratio_total": 0.171945
+    },
+    "13m-14m": {
+      "positive_patients": 1066,
+      "negative_patients": 1099,
+      "missing_patients": 1877,
+      "observed_patients": 2165,
+      "positive_ratio_observed": 0.492379,
+      "negative_ratio_observed": 0.507621,
+      "positive_ratio_total": 0.263731,
+      "negative_ratio_total": 0.271895,
+      "missing_ratio_total": 0.464374
+    },
+    "15m-24m": {
+      "positive_patients": 2426,
+      "negative_patients": 577,
+      "missing_patients": 1039,
+      "observed_patients": 3003,
+      "positive_ratio_observed": 0.807859,
+      "negative_ratio_observed": 0.192141,
+      "positive_ratio_total": 0.600198,
+      "negative_ratio_total": 0.142751,
+      "missing_ratio_total": 0.257051
+    },
+    "2y+": {
+      "positive_patients": 2501,
+      "negative_patients": 325,
+      "missing_patients": 1216,
+      "observed_patients": 2826,
+      "positive_ratio_observed": 0.884996,
+      "negative_ratio_observed": 0.115004,
+      "positive_ratio_total": 0.618753,
+      "negative_ratio_total": 0.080406,
+      "missing_ratio_total": 0.300841
+    }
+  },
+  "血氨": {
+    "2w-1m": {
+      "positive_patients": 30,
+      "negative_patients": 16,
+      "missing_patients": 3996,
+      "observed_patients": 46,
+      "positive_ratio_observed": 0.652174,
+      "negative_ratio_observed": 0.347826,
+      "positive_ratio_total": 0.007422,
+      "negative_ratio_total": 0.003958,
+      "missing_ratio_total": 0.988619
+    },
+    "2m-6m": {
+      "positive_patients": 88,
+      "negative_patients": 27,
+      "missing_patients": 3927,
+      "observed_patients": 115,
+      "positive_ratio_observed": 0.765217,
+      "negative_ratio_observed": 0.234783,
+      "positive_ratio_total": 0.021771,
+      "negative_ratio_total": 0.00668,
+      "missing_ratio_total": 0.971549
+    },
+    "7m-12m": {
+      "positive_patients": 41,
+      "negative_patients": 16,
+      "missing_patients": 3985,
+      "observed_patients": 57,
+      "positive_ratio_observed": 0.719298,
+      "negative_ratio_observed": 0.280702,
+      "positive_ratio_total": 0.010143,
+      "negative_ratio_total": 0.003958,
+      "missing_ratio_total": 0.985898
+    },
+    "13m-14m": {
+      "positive_patients": 12,
+      "negative_patients": 4,
+      "missing_patients": 4026,
+      "observed_patients": 16,
+      "positive_ratio_observed": 0.75,
+      "negative_ratio_observed": 0.25,
+      "positive_ratio_total": 0.002969,
+      "negative_ratio_total": 0.00099,
+      "missing_ratio_total": 0.996042
+    },
+    "15m-24m": {
+      "positive_patients": 28,
+      "negative_patients": 15,
+      "missing_patients": 3999,
+      "observed_patients": 43,
+      "positive_ratio_observed": 0.651163,
+      "negative_ratio_observed": 0.348837,
+      "positive_ratio_total": 0.006927,
+      "negative_ratio_total": 0.003711,
+      "missing_ratio_total": 0.989362
+    },
+    "2y+": {
+      "positive_patients": 75,
+      "negative_patients": 35,
+      "missing_patients": 3932,
+      "observed_patients": 110,
+      "positive_ratio_observed": 0.681818,
+      "negative_ratio_observed": 0.318182,
+      "positive_ratio_total": 0.018555,
+      "negative_ratio_total": 0.008659,
+      "missing_ratio_total": 0.972786
+    }
+  },
+  "血糖": {
+    "2w-1m": {
+      "positive_patients": 2928,
+      "negative_patients": 943,
+      "missing_patients": 171,
+      "observed_patients": 3871,
+      "positive_ratio_observed": 0.756394,
+      "negative_ratio_observed": 0.243606,
+      "positive_ratio_total": 0.724394,
+      "negative_ratio_total": 0.2333,
+      "missing_ratio_total": 0.042306
+    },
+    "2m-6m": {
+      "positive_patients": 2508,
+      "negative_patients": 1317,
+      "missing_patients": 217,
+      "observed_patients": 3825,
+      "positive_ratio_observed": 0.655686,
+      "negative_ratio_observed": 0.344314,
+      "positive_ratio_total": 0.620485,
+      "negative_ratio_total": 0.325829,
+      "missing_ratio_total": 0.053686
+    },
+    "7m-12m": {
+      "positive_patients": 1212,
+      "negative_patients": 1870,
+      "missing_patients": 960,
+      "observed_patients": 3082,
+      "positive_ratio_observed": 0.393251,
+      "negative_ratio_observed": 0.606749,
+      "positive_ratio_total": 0.299852,
+      "negative_ratio_total": 0.462642,
+      "missing_ratio_total": 0.237506
+    },
+    "13m-14m": {
+      "positive_patients": 342,
+      "negative_patients": 1233,
+      "missing_patients": 2467,
+      "observed_patients": 1575,
+      "positive_ratio_observed": 0.217143,
+      "negative_ratio_observed": 0.782857,
+      "positive_ratio_total": 0.084612,
+      "negative_ratio_total": 0.305047,
+      "missing_ratio_total": 0.610341
+    },
+    "15m-24m": {
+      "positive_patients": 1051,
+      "negative_patients": 1550,
+      "missing_patients": 1441,
+      "observed_patients": 2601,
+      "positive_ratio_observed": 0.404075,
+      "negative_ratio_observed": 0.595925,
+      "positive_ratio_total": 0.26002,
+      "negative_ratio_total": 0.383474,
+      "missing_ratio_total": 0.356507
+    },
+    "2y+": {
+      "positive_patients": 1312,
+      "negative_patients": 1323,
+      "missing_patients": 1407,
+      "observed_patients": 2635,
+      "positive_ratio_observed": 0.497913,
+      "negative_ratio_observed": 0.502087,
+      "positive_ratio_total": 0.324592,
+      "negative_ratio_total": 0.327313,
+      "missing_ratio_total": 0.348095
+    }
+  },
+  "雷帕浓度": {
+    "2w-1m": {
+      "positive_patients": 6,
+      "negative_patients": 2,
+      "missing_patients": 4034,
+      "observed_patients": 8,
+      "positive_ratio_observed": 0.75,
+      "negative_ratio_observed": 0.25,
+      "positive_ratio_total": 0.001484,
+      "negative_ratio_total": 0.000495,
+      "missing_ratio_total": 0.998021
+    },
+    "2m-6m": {
+      "positive_patients": 48,
+      "negative_patients": 10,
+      "missing_patients": 3984,
+      "observed_patients": 58,
+      "positive_ratio_observed": 0.827586,
+      "negative_ratio_observed": 0.172414,
+      "positive_ratio_total": 0.011875,
+      "negative_ratio_total": 0.002474,
+      "missing_ratio_total": 0.985651
+    },
+    "7m-12m": {
+      "positive_patients": 38,
+      "negative_patients": 6,
+      "missing_patients": 3998,
+      "observed_patients": 44,
+      "positive_ratio_observed": 0.863636,
+      "negative_ratio_observed": 0.136364,
+      "positive_ratio_total": 0.009401,
+      "negative_ratio_total": 0.001484,
+      "missing_ratio_total": 0.989114
+    },
+    "13m-14m": {
+      "positive_patients": 15,
+      "negative_patients": 9,
+      "missing_patients": 4018,
+      "observed_patients": 24,
+      "positive_ratio_observed": 0.625,
+      "negative_ratio_observed": 0.375,
+      "positive_ratio_total": 0.003711,
+      "negative_ratio_total": 0.002227,
+      "missing_ratio_total": 0.994062
+    },
+    "15m-24m": {
+      "positive_patients": 44,
+      "negative_patients": 10,
+      "missing_patients": 3988,
+      "observed_patients": 54,
+      "positive_ratio_observed": 0.814815,
+      "negative_ratio_observed": 0.185185,
+      "positive_ratio_total": 0.010886,
+      "negative_ratio_total": 0.002474,
+      "missing_ratio_total": 0.98664
+    },
+    "2y+": {
+      "positive_patients": 50,
+      "negative_patients": 7,
+      "missing_patients": 3985,
+      "observed_patients": 57,
+      "positive_ratio_observed": 0.877193,
+      "negative_ratio_observed": 0.122807,
+      "positive_ratio_total": 0.01237,
+      "negative_ratio_total": 0.001732,
+      "missing_ratio_total": 0.985898
+    }
+  },
+  "HBV-DNA": {
+    "2w-1m": {
+      "positive_patients": 10,
+      "negative_patients": 8,
+      "missing_patients": 4024,
+      "observed_patients": 18,
+      "positive_ratio_observed": 0.555556,
+      "negative_ratio_observed": 0.444444,
+      "positive_ratio_total": 0.002474,
+      "negative_ratio_total": 0.001979,
+      "missing_ratio_total": 0.995547
+    },
+    "2m-6m": {
+      "positive_patients": 401,
+      "negative_patients": 400,
+      "missing_patients": 3241,
+      "observed_patients": 801,
+      "positive_ratio_observed": 0.500624,
+      "negative_ratio_observed": 0.499376,
+      "positive_ratio_total": 0.099208,
+      "negative_ratio_total": 0.098961,
+      "missing_ratio_total": 0.801831
+    },
+    "7m-12m": {
+      "positive_patients": 168,
+      "negative_patients": 562,
+      "missing_patients": 3312,
+      "observed_patients": 730,
+      "positive_ratio_observed": 0.230137,
+      "negative_ratio_observed": 0.769863,
+      "positive_ratio_total": 0.041564,
+      "negative_ratio_total": 0.13904,
+      "missing_ratio_total": 0.819396
+    },
+    "13m-14m": {
+      "positive_patients": 67,
+      "negative_patients": 217,
+      "missing_patients": 3758,
+      "observed_patients": 284,
+      "positive_ratio_observed": 0.235915,
+      "negative_ratio_observed": 0.764085,
+      "positive_ratio_total": 0.016576,
+      "negative_ratio_total": 0.053686,
+      "missing_ratio_total": 0.929738
+    },
+    "15m-24m": {
+      "positive_patients": 228,
+      "negative_patients": 501,
+      "missing_patients": 3313,
+      "observed_patients": 729,
+      "positive_ratio_observed": 0.312757,
+      "negative_ratio_observed": 0.687243,
+      "positive_ratio_total": 0.056408,
+      "negative_ratio_total": 0.123949,
+      "missing_ratio_total": 0.819644
+    },
+    "2y+": {
+      "positive_patients": 336,
+      "negative_patients": 485,
+      "missing_patients": 3221,
+      "observed_patients": 821,
+      "positive_ratio_observed": 0.409257,
+      "negative_ratio_observed": 0.590743,
+      "positive_ratio_total": 0.083127,
+      "negative_ratio_total": 0.11999,
+      "missing_ratio_total": 0.796883
+    }
+  }
+}

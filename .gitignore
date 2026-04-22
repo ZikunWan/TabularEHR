@@ -1,0 +1,10 @@
+.cache/
+.codex
+.vscode/
+wandb/
+
+__pycache__/
+*.py[cod]
+*.so
+
+.DS_Store
