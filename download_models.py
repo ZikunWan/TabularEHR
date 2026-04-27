@@ -9,7 +9,7 @@ HF_HOME = "/data/zikun_workspace/.cache"
 MODEL_ROOT = "/data/model_weights_public"
 
 MODEL_IDS = [
-    "StanfordShahLab/llama-base-4096-clmbr"
+    "emilyalsentzer/Bio_ClinicalBERT"
 ]
 
 
