@@ -391,15 +391,17 @@ def main():
                     type_vocab=type_vocab,
                 )
                 masked_table_embeds = _encode_table(table_encoder, table_token_embedding, masked_batch, device=device)
+                text_to_table_prompt = _build_text_to_table_prompt(prompt_text)
                 text_to_table_pred = _greedy_generate_with_table(
                     llm=llm,
                     tokenizer=tokenizer,
                     table_embeds=masked_table_embeds,
-                    prompt_text=_build_text_to_table_prompt(prompt_text),
+                    prompt_text=text_to_table_prompt,
                     placeholder_token_id=table_placeholder_token_id,
                     max_new_tokens=gen_args.max_new_tokens,
                 )
                 record["text_to_table"] = {
+                    "prompt": text_to_table_prompt,
                     "prompt_markdown": prompt_text,
                     "target": target_json,
                     "prediction": text_to_table_pred,
