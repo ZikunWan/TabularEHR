@@ -1,32 +1,28 @@
+import argparse
+import importlib
 import json
-import os
 import pickle
-import shutil
 import sys
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+import torch
+from safetensors.torch import save_file
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
-from transformers import HfArgumentParser
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-ETHOS_SRC = os.path.dirname(os.path.abspath(__file__))
-if ETHOS_SRC not in sys.path:
-    sys.path.insert(0, ETHOS_SRC)
+THIS_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = THIS_DIR.parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(THIS_DIR))
 
 from ethos.constants import STATIC_DATA_FN, SpecialToken as ST
-from ethos.datasets.base import TimelineDataset
 from ethos.vocabulary import Vocabulary
 
 
-TIME_INTERVAL_SPEC = [
+TIME_INTERVALS = [
     ("5m-15m", 5 * 60),
     ("15m-45m", 15 * 60),
     ("45m-1h15m", 45 * 60),
@@ -47,506 +43,355 @@ TIME_INTERVAL_SPEC = [
     ("2mt-6mt", 60 * 86400),
     ("=6mt", 180 * 86400),
 ]
+MEDS_COLUMNS = ["subject_id", "time", "code", "numeric_value", "text_value", "unit", "omop_table"]
 
 
-def rank0_print(*args, **kwargs):
-    local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
-    if local_rank in (-1, 0):
-        print(*args, **kwargs)
+class _ConcatDataset:
+    def __init__(self, datasets):
+        self.datasets = datasets
+        self.offsets = np.cumsum([0] + [len(dataset) for dataset in datasets])
+
+    def __len__(self):
+        return int(self.offsets[-1])
+
+    def __getitem__(self, idx):
+        dataset_idx = int(np.searchsorted(self.offsets[1:], idx, side="right"))
+        return self.datasets[dataset_idx][idx - int(self.offsets[dataset_idx])]
 
 
-@dataclass
-class BuildArguments:
-    input_dir: str = field(
-        default="/data/zikun_workspace/code/.cache/ethos_exports/ehr_bench/train",
-        metadata={"help": "Directory containing raw MEDS parquet shards exported for ETHOS."},
-    )
-    output_dir: str = field(
-        default="/data/zikun_workspace/code/.cache/ethos_tokenized/ehr_bench/train",
-        metadata={"help": "Directory to save ETHOS-ready vocab artifacts and tensorized shards."},
-    )
-    overwrite_output: bool = field(
-        default=False,
-        metadata={"help": "Overwrite output_dir if it already contains files."},
-    )
-    reuse_artifacts_dir: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": (
-                "Optional train artifact directory. When set, reuse quantiles/vocab/intervals "
-                "instead of fitting a new vocabulary."
-            )
-        },
-    )
-    num_numeric_buckets: int = field(
-        default=10,
-        metadata={"help": "Number of quantile buckets for numeric codes."},
-    )
-    min_numeric_values_per_code: int = field(
-        default=20,
-        metadata={"help": "Minimum observations before fitting numeric quantiles for a code."},
-    )
-    max_text_values_per_code: int = field(
-        default=200,
-        metadata={"help": "Keep top-K normalized text categories per code during train vocab fitting."},
-    )
-    static_prefixes: str = field(
-        default="GENDER,RACE,ETHNICITY,MARITAL",
-        metadata={"help": "Comma-separated roots to keep in static_data.pickle instead of the timeline."},
-    )
-    unknown_event_token: str = field(
-        default="UNKNOWN_EVENT",
-        metadata={"help": "Fallback token when applying a train vocab to unseen events."},
-    )
-    empty_context_token: str = field(
-        default="NO_EVENT_CONTEXT",
-        metadata={"help": "Fallback token when a timeline has no dynamic events after filtering."},
-    )
+def _first(batch):
+    return batch[0]
 
 
-def _list_parquet_files(input_dir: str) -> List[Path]:
-    files = sorted(Path(input_dir).glob("*.parquet"))
-    if not files:
-        raise FileNotFoundError(f"No parquet files found in: {input_dir}")
-    return files
-
-
-def _ensure_output_dir(output_dir: str, overwrite: bool):
-    path = Path(output_dir)
-    if path.exists():
-        existing_files = list(path.glob("*"))
-        if existing_files and not overwrite:
-            raise FileExistsError(
-                f"Output directory already contains files: {path}. "
-                "Pass --overwrite_output True to overwrite."
-            )
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def _parse_static_prefixes(static_prefixes: str) -> List[str]:
-    parsed = [item.strip().upper() for item in str(static_prefixes).split(",") if item and item.strip()]
-    if not parsed:
-        raise ValueError("static_prefixes cannot be empty")
-    return parsed
-
-
-def _normalize_text_fragment(value: object) -> str:
+def _norm_text(value):
     text = "" if value is None else str(value).strip().upper()
-    normalized = []
-    last_is_underscore = False
+    out, was_sep = [], False
     for ch in text:
-        keep = ch.isalnum()
-        if keep:
-            normalized.append(ch)
-            last_is_underscore = False
-            continue
-        if not last_is_underscore:
-            normalized.append("_")
-            last_is_underscore = True
-    text = "".join(normalized).strip("_")
-    return text or "UNKNOWN"
+        if ch.isalnum():
+            out.append(ch)
+            was_sep = False
+        elif not was_sep:
+            out.append("_")
+            was_sep = True
+    return "".join(out).strip("_") or "UNKNOWN"
 
 
-def _fit_quantile_breaks(values: Sequence[float], num_buckets: int) -> List[float]:
-    if not values:
-        return []
-    quantiles = np.linspace(0, 1, int(num_buckets) + 1)[1:-1]
-    breaks = np.quantile(np.asarray(values, dtype=np.float64), quantiles)
-    unique_breaks = sorted({float(v) for v in breaks.tolist() if np.isfinite(v)})
-    return unique_breaks
+def _as_meds_df(sample, subject_id, empty_token):
+    df = sample.copy() if isinstance(sample, pd.DataFrame) else sample["meds_table"].copy()
+    for col in MEDS_COLUMNS:
+        if col not in df.columns:
+            df[col] = None
+    df = df[MEDS_COLUMNS].copy()
+    if len(df) == 0:
+        df = pd.DataFrame([{
+            "subject_id": subject_id,
+            "time": "1970-01-01 00:00:00",
+            "code": empty_token,
+            "numeric_value": None,
+            "text_value": "",
+            "unit": "",
+            "omop_table": "observation",
+        }])
+    df["subject_id"] = subject_id
+    df["time"] = df["time"].fillna("").astype(str)
+    df["code"] = df["code"].fillna("").astype(str)
+    df["text_value"] = df["text_value"].fillna("").astype(str)
+    return df
 
 
-def _build_interval_estimates() -> Dict[str, Dict[str, int]]:
-    stats = {}
-    for stat_name in ("min", "q1", "mean", "median", "q3", "max"):
-        stats[stat_name] = {}
-        for label, lower_bound_seconds in TIME_INTERVAL_SPEC:
-            stats[stat_name][label] = int(lower_bound_seconds * 1_000_000)
-    return stats
+def _iter_samples(dataset, empty_token, max_samples, num_workers):
+    n = len(dataset) if max_samples is None else min(len(dataset), max_samples)
+    source = dataset if max_samples is None else Subset(dataset, range(n))
+    loader = DataLoader(source, batch_size=1, shuffle=False, num_workers=num_workers, collate_fn=_first)
+    for i, sample in enumerate(loader):
+        yield _as_meds_df(sample, i + 1, empty_token)
 
 
-def _bucketize_time_gap(delta_us: int) -> Optional[str]:
+def _iter_chunks(dataset, empty_token, samples_per_shard, max_samples, num_workers):
+    pending, shard_idx = [], 0
+    for df in _iter_samples(dataset, empty_token, max_samples, num_workers):
+        pending.append(df)
+        if len(pending) == samples_per_shard:
+            yield shard_idx, pd.concat(pending, ignore_index=True)
+            pending, shard_idx = [], shard_idx + 1
+    if pending:
+        yield shard_idx, pd.concat(pending, ignore_index=True)
+
+
+def _fit_stats(dataset, empty_token, max_samples, num_workers, num_buckets, min_numeric, max_text):
+    nums, texts, raw_counts = defaultdict(list), defaultdict(Counter), Counter()
+    total = len(dataset) if max_samples is None else min(len(dataset), max_samples)
+
+    for df in tqdm(_iter_samples(dataset, empty_token, max_samples, num_workers), total=total, desc="Fit ETHOS vocab"):
+        raw_counts.update(df["code"])
+
+        numeric = pd.to_numeric(df["numeric_value"], errors="coerce")
+        for code, values in df[numeric.notna()].assign(numeric_value=numeric[numeric.notna()].astype(float)).groupby("code")["numeric_value"]:
+            nums[str(code)].extend(values.tolist())
+
+        text = df["text_value"].fillna("").astype(str).str.strip()
+        for code, values in df[text != ""].assign(text_value=text[text != ""]).groupby("code")["text_value"]:
+            texts[str(code)].update(_norm_text(v) for v in values.tolist())
+
+    quantiles = {}
+    for code, values in nums.items():
+        if len(values) >= min_numeric:
+            qs = np.quantile(np.asarray(values, dtype=np.float64), np.linspace(0, 1, num_buckets + 1)[1:-1])
+            quantiles[code] = sorted({float(v) for v in qs.tolist() if np.isfinite(v)})
+    text_values = {code: [v for v, _ in c.most_common(max_text)] for code, c in texts.items()}
+    return quantiles, text_values, raw_counts
+
+
+def _interval_estimates():
+    return {
+        stat: {label: int(seconds * 1_000_000) for label, seconds in TIME_INTERVALS}
+        for stat in ("min", "q1", "mean", "median", "q3", "max")
+    }
+
+
+def _time_token(delta_us):
     if delta_us <= 0:
         return None
-    delta_seconds = delta_us / 1_000_000.0
-    chosen = None
-    for label, lower_bound_seconds in TIME_INTERVAL_SPEC:
-        if delta_seconds >= lower_bound_seconds:
+    delta_seconds, chosen = delta_us / 1_000_000.0, TIME_INTERVALS[0][0]
+    for label, seconds in TIME_INTERVALS:
+        if delta_seconds >= seconds:
             chosen = label
-    if chosen is None:
-        return TIME_INTERVAL_SPEC[0][0]
     return chosen
 
 
-def _load_artifacts_from_dir(artifact_dir: str):
-    artifact_dir = Path(artifact_dir)
-    quantiles_path = artifact_dir / "quantiles.json"
-    intervals_path = artifact_dir / "interval_estimates.json"
-    if not quantiles_path.is_file():
-        raise FileNotFoundError(f"quantiles.json not found in {artifact_dir}")
-    if not intervals_path.is_file():
-        raise FileNotFoundError(f"interval_estimates.json not found in {artifact_dir}")
-
-    vocab = Vocabulary.from_path(artifact_dir)
-    with quantiles_path.open("r", encoding="utf-8") as f:
-        quantiles = json.load(f)
-    with intervals_path.open("r", encoding="utf-8") as f:
-        intervals = json.load(f)
-    return vocab, quantiles, intervals
-
-
-def _fit_code_statistics(
-    parquet_files: Sequence[Path],
-    *,
-    num_numeric_buckets: int,
-    min_numeric_values_per_code: int,
-    max_text_values_per_code: int,
-) -> Tuple[Dict[str, List[float]], Dict[str, List[str]], Counter]:
-    numeric_values_by_code: Dict[str, List[float]] = defaultdict(list)
-    text_counter_by_code: Dict[str, Counter] = defaultdict(Counter)
-    raw_code_counter: Counter = Counter()
-
-    pbar = tqdm(
-        parquet_files,
-        desc="Fitting raw code statistics",
-        disable=int(os.environ.get("LOCAL_RANK", "-1")) not in (-1, 0),
-    )
-    for parquet_path in pbar:
-        df = pd.read_parquet(parquet_path)
-        if len(df) == 0:
-            continue
-        raw_code_counter.update(df["code"].fillna("").astype(str).tolist())
-
-        numeric_series = pd.to_numeric(df["numeric_value"], errors="coerce")
-        numeric_mask = numeric_series.notna()
-        if numeric_mask.any():
-            numeric_df = df.loc[numeric_mask, ["code"]].copy()
-            numeric_df["numeric_value"] = numeric_series.loc[numeric_mask].astype(float).tolist()
-            for code, values in numeric_df.groupby("code")["numeric_value"]:
-                numeric_values_by_code[str(code)].extend(values.tolist())
-
-        text_series = df["text_value"].fillna("").astype(str).str.strip()
-        text_mask = text_series != ""
-        if text_mask.any():
-            text_df = df.loc[text_mask, ["code"]].copy()
-            text_df["text_value"] = text_series.loc[text_mask].tolist()
-            for code, values in text_df.groupby("code")["text_value"]:
-                normalized_values = [_normalize_text_fragment(value) for value in values.tolist()]
-                text_counter_by_code[str(code)].update(normalized_values)
-
-    quantiles_by_code: Dict[str, List[float]] = {}
-    for code, values in numeric_values_by_code.items():
-        if len(values) < int(min_numeric_values_per_code):
-            continue
-        quantiles_by_code[code] = _fit_quantile_breaks(values, int(num_numeric_buckets))
-
-    allowed_text_values_by_code: Dict[str, List[str]] = {}
-    for code, counter in text_counter_by_code.items():
-        allowed = [value for value, _ in counter.most_common(int(max_text_values_per_code))]
-        if allowed:
-            allowed_text_values_by_code[code] = allowed
-
-    return quantiles_by_code, allowed_text_values_by_code, raw_code_counter
-
-
-def _event_to_token(
-    row: pd.Series,
-    *,
-    quantiles_by_code: Dict[str, List[float]],
-    allowed_text_values_by_code: Dict[str, List[str]],
-) -> str:
-    code = str(row.get("code", "")).strip()
-    if not code:
-        return ""
-
-    numeric_value = pd.to_numeric(row.get("numeric_value"), errors="coerce")
-    if pd.notna(numeric_value) and code in quantiles_by_code and len(quantiles_by_code[code]) > 0:
-        bucket_idx = int(np.searchsorted(np.asarray(quantiles_by_code[code], dtype=np.float64), float(numeric_value), side="right")) + 1
-        return f"{code}//Q{bucket_idx}"
-
-    text_value = str(row.get("text_value", "")).strip()
-    if text_value:
-        normalized = _normalize_text_fragment(text_value)
-        allowed = allowed_text_values_by_code.get(code)
-        if allowed is None or normalized in allowed:
-            return f"{code}//VALUE//{normalized}"
-        return f"{code}//VALUE//OTHER"
-
+def _event_token(row, quantiles, text_values):
+    code = str(row["code"]).strip()
+    numeric = pd.to_numeric(row.get("numeric_value"), errors="coerce")
+    if pd.notna(numeric) and quantiles.get(code):
+        bucket = np.searchsorted(np.asarray(quantiles[code], dtype=np.float64), float(numeric), side="right") + 1
+        return f"{code}//Q{bucket}"
+    text = str(row.get("text_value", "")).strip()
+    if text:
+        value = _norm_text(text)
+        allowed = text_values.get(code)
+        return f"{code}//VALUE//{value if allowed is None or value in allowed else 'OTHER'}"
     return code
 
 
-def _parse_time_to_us(series: pd.Series) -> pd.Series:
-    timestamps = pd.to_datetime(series, errors="coerce")
-    out = []
-    for ts in timestamps:
-        if pd.isna(ts):
-            out.append(None)
-        else:
-            out.append(int(ts.value // 1000))
-    return pd.Series(out, index=series.index, dtype="object")
+def _to_time_us(series):
+    return pd.Series(
+        [None if pd.isna(ts) else int(ts.value // 1000) for ts in pd.to_datetime(series, errors="coerce")],
+        index=series.index,
+        dtype="object",
+    )
 
 
-def _copy_artifact_files(src_dir: str, output_dir: str):
-    src = Path(src_dir)
-    out = Path(output_dir)
-    for name in ("quantiles.json", "interval_estimates.json"):
-        shutil.copy2(src / name, out / name)
-    vocab_file = next(src.glob("vocab_t*.csv"))
-    shutil.copy2(vocab_file, out / vocab_file.name)
-
-
-def _build_static_data_entry(static_code: str) -> dict:
-    return {"code": [static_code], "time": [0]}
-
-
-def _process_single_parquet(
-    parquet_path: Path,
-    *,
-    output_dir: Path,
-    static_roots: Sequence[str],
-    quantiles_by_code: Dict[str, List[float]],
-    allowed_text_values_by_code: Dict[str, List[str]],
-    reuse_vocab: Optional[Vocabulary],
-    unknown_event_token: str,
-    empty_context_token: str,
-) -> Tuple[Counter, Dict[int, dict]]:
-    df = pd.read_parquet(parquet_path)
-    if len(df) == 0:
-        processed_df = pd.DataFrame(columns=["subject_id", "time", "code"])
-        processed_path = output_dir / parquet_path.name
-        processed_df.to_parquet(processed_path, index=False)
-        return Counter(), {}
-
+def _tokenize(df, static_roots, quantiles, text_values, vocab, unknown_token, empty_token):
     df = df.copy()
-    df["subject_id"] = pd.to_numeric(df["subject_id"], errors="raise").astype(int)
-    df["time_us"] = _parse_time_to_us(df["time"])
-    df["code"] = df["code"].fillna("").astype(str)
-    df["text_value"] = df["text_value"].fillna("").astype(str)
+    df["time_us"] = _to_time_us(df["time"])
+    known = set(vocab.stoi) if vocab is not None else None
+    rows, counts, static_data = [], Counter(), {}
 
-    token_counter: Counter = Counter()
-    static_data: Dict[int, dict] = {}
-    processed_rows: List[dict] = []
-    known_tokens = set(reuse_vocab.stoi.keys()) if reuse_vocab is not None else None
+    for subject_id, group in df.groupby("subject_id", sort=True):
+        group = group.sort_values(["time_us", "code"], na_position="last")
+        static = {root: {"code": [f"{root}//UNKNOWN"], "time": [0]} for root in static_roots}
+        events = []
 
-    grouped = df.groupby("subject_id", sort=True)
-    for subject_id, group in grouped:
-        group = group.sort_values(["time_us", "code"], na_position="last").reset_index(drop=True)
-        static_entry = {root: _build_static_data_entry(f"{root}//UNKNOWN") for root in static_roots}
-
-        dynamic_events: List[Tuple[int, str]] = []
         for _, row in group.iterrows():
-            token = _event_to_token(
-                row,
-                quantiles_by_code=quantiles_by_code,
-                allowed_text_values_by_code=allowed_text_values_by_code,
-            )
-            if not token:
-                continue
-
+            token = _event_token(row, quantiles, text_values)
             root = token.split("//", 1)[0].upper()
             if root in static_roots:
-                static_entry[root] = _build_static_data_entry(token)
+                static[root] = {"code": [token], "time": [0]}
                 continue
+            event_time = row["time_us"]
+            event_time = 0 if event_time is None and not events else events[-1][0] if event_time is None else int(event_time)
+            events.append((event_time, unknown_token if known is not None and token not in known else token))
 
-            event_time = row.get("time_us")
-            if event_time is None:
-                event_time = 0 if not dynamic_events else dynamic_events[-1][0]
-            event_time = int(event_time)
-
-            if known_tokens is not None and token not in known_tokens:
-                token = unknown_event_token
-            dynamic_events.append((event_time, token))
-
-        if not dynamic_events:
-            fallback_token = empty_context_token
-            if known_tokens is not None and fallback_token not in known_tokens:
-                fallback_token = unknown_event_token
-            dynamic_events = [(0, fallback_token)]
-
-        final_events: List[Tuple[int, str]] = []
-        prev_time = None
-        for event_time, token in dynamic_events:
+        events = events or [(0, empty_token if known is None or empty_token in known else unknown_token)]
+        timeline, prev_time = [], None
+        for event_time, token in events:
             if prev_time is not None:
-                interval_token = _bucketize_time_gap(event_time - prev_time)
-                if interval_token:
-                    if known_tokens is None or interval_token in known_tokens:
-                        final_events.append((event_time, interval_token))
-                    else:
-                        final_events.append((event_time, unknown_event_token))
-            final_events.append((event_time, token))
+                gap = _time_token(event_time - prev_time)
+                if gap:
+                    timeline.append((event_time, unknown_token if known is not None and gap not in known else gap))
+            timeline.append((event_time, token))
             prev_time = event_time
 
-        timeline_end_token = str(ST.TIMELINE_END)
-        if known_tokens is not None and timeline_end_token not in known_tokens:
-            timeline_end_token = unknown_event_token
-        final_events.append((prev_time if prev_time is not None else 0, timeline_end_token))
-
-        for root, item in static_entry.items():
-            token = item["code"][0]
-            if known_tokens is not None and token not in known_tokens:
+        end_token = ST.TIMELINE_END.value
+        timeline.append((prev_time or 0, unknown_token if known is not None and end_token not in known else end_token))
+        for root, value in static.items():
+            token = value["code"][0]
+            if known is not None and token not in known:
                 fallback = f"{root}//UNKNOWN"
-                if fallback in known_tokens:
-                    static_entry[root] = _build_static_data_entry(fallback)
-                else:
-                    static_entry[root] = _build_static_data_entry(unknown_event_token)
+                static[root] = {"code": [fallback if fallback in known else unknown_token], "time": [0]}
+        static_data[int(subject_id)] = static
 
-        static_data[int(subject_id)] = static_entry
+        for event_time, token in timeline:
+            rows.append({"subject_id": int(subject_id), "time": int(event_time), "code": token})
+            counts[token] += 1
 
-        for event_time, token in final_events:
-            processed_rows.append(
-                {
-                    "subject_id": int(subject_id),
-                    "time": int(event_time),
-                    "code": token,
-                }
-            )
-            token_counter[token] += 1
+    return pd.DataFrame(rows).sort_values(["subject_id", "time", "code"]).reset_index(drop=True), counts, static_data
 
-    processed_df = pd.DataFrame(processed_rows, columns=["subject_id", "time", "code"])
-    processed_df = processed_df.sort_values(["subject_id", "time", "code"]).reset_index(drop=True)
-    processed_path = output_dir / parquet_path.name
-    processed_df.to_parquet(processed_path, index=False)
-    return token_counter, static_data
+
+def _make_vocab(static_roots, raw_counts, quantiles, text_values, intervals, unknown_token, empty_token):
+    tokens = [f"{root}//UNKNOWN" for root in static_roots]
+    tokens += [label for label, _ in TIME_INTERVALS]
+    tokens += [ST.TIMELINE_END.value, unknown_token, empty_token]
+    for code, _ in raw_counts.most_common():
+        tokens.append(code)
+        tokens += [f"{code}//Q{i}" for i in range(1, len(quantiles.get(code, [])) + 2)]
+        tokens += [f"{code}//VALUE//{value}" for value in text_values.get(code, [])]
+        if code in text_values:
+            tokens.append(f"{code}//VALUE//OTHER")
+    return Vocabulary(list(dict.fromkeys(tokens)), intervals)
+
+
+def _save_shard(df, shard_idx, output_dir, vocab):
+    patients = df.groupby("subject_id", sort=False).size().reset_index(name="len")
+    offsets = patients["len"].cumsum().shift(1, fill_value=0).astype(np.int64)
+    save_file(
+        {
+            "tokens": torch.tensor([vocab.stoi[c] for c in df["code"]], dtype=torch.long),
+            "times": torch.tensor(df["time"].astype(np.int64).to_numpy(), dtype=torch.long),
+            "patient_ids": torch.tensor(patients["subject_id"].astype(np.int64).to_numpy(), dtype=torch.long),
+            "patient_offsets": torch.tensor(offsets.to_numpy(), dtype=torch.long),
+        },
+        output_dir / f"{shard_idx:05d}.safetensors",
+    )
+
+
+def _process(dataset, output_dir, vocab, save, empty_token, max_samples, num_workers, samples_per_shard, static_roots, quantiles, text_values, unknown_token):
+    counts, static_data = Counter(), {}
+    for shard_idx, df in tqdm(
+        _iter_chunks(dataset, empty_token, samples_per_shard, max_samples, num_workers),
+        desc="Tokenize MEDS with ETHOS",
+    ):
+        tokenized, shard_counts, shard_static = _tokenize(df, static_roots, quantiles, text_values, vocab, unknown_token, empty_token)
+        counts.update(shard_counts)
+        static_data.update(shard_static)
+        if save:
+            _save_shard(tokenized, shard_idx, output_dir, vocab)
+    return counts, static_data
+
+
+def build_from_meds_dataset(
+    dataset,
+    *,
+    output_dir,
+    reuse_artifacts_dir=None,
+    overwrite_output=False,
+    num_numeric_buckets=10,
+    min_numeric_values_per_code=20,
+    max_text_values_per_code=200,
+    static_prefixes="GENDER,RACE,ETHNICITY,MARITAL",
+    unknown_event_token="UNKNOWN_EVENT",
+    empty_context_token="NO_EVENT_CONTEXT",
+    samples_per_shard=2000,
+    max_samples=None,
+    num_workers=0,
+):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if overwrite_output:
+        for path in output_dir.glob("*"):
+            path.unlink()
+
+    static_roots = [x.strip().upper() for x in static_prefixes.split(",") if x.strip()]
+    if reuse_artifacts_dir:
+        reuse_dir = Path(reuse_artifacts_dir)
+        vocab = Vocabulary.from_path(reuse_dir)
+        quantiles = json.load((reuse_dir / "quantiles.json").open())
+        text_values = json.load((reuse_dir / "text_values.json").open())
+        intervals = json.load((reuse_dir / "interval_estimates.json").open())
+    else:
+        quantiles, text_values, raw_counts = _fit_stats(
+            dataset,
+            empty_context_token,
+            max_samples,
+            num_workers,
+            num_numeric_buckets,
+            min_numeric_values_per_code,
+            max_text_values_per_code,
+        )
+        intervals, vocab = _interval_estimates(), None
+        with (output_dir / "raw_code_counts.csv").open("w", encoding="utf-8") as f:
+            f.write("code,count\n")
+            for code, count in raw_counts.most_common():
+                f.write(f"{code},{count}\n")
+
+    if reuse_artifacts_dir:
+        counts, static_data = _process(dataset, output_dir, vocab, True, empty_context_token, max_samples, num_workers, samples_per_shard, static_roots, quantiles, text_values, unknown_event_token)
+    else:
+        vocab = _make_vocab(static_roots, raw_counts, quantiles, text_values, intervals, unknown_event_token, empty_context_token)
+        vocab.dump(output_dir)
+        counts, static_data = _process(dataset, output_dir, vocab, True, empty_context_token, max_samples, num_workers, samples_per_shard, static_roots, quantiles, text_values, unknown_event_token)
+
+    pickle.dump(static_data, (output_dir / STATIC_DATA_FN).open("wb"))
+    json.dump(quantiles, (output_dir / "quantiles.json").open("w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    json.dump(text_values, (output_dir / "text_values.json").open("w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    json.dump(intervals, (output_dir / "interval_estimates.json").open("w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    json.dump(
+        {
+            "input_source": "meds_dataset",
+            "output_dir": str(output_dir),
+            "reuse_artifacts_dir": reuse_artifacts_dir,
+            "num_subjects": len(static_data),
+            "vocab_size": len(vocab),
+            "static_roots": static_roots,
+            "samples_per_shard": samples_per_shard,
+            "num_workers": num_workers,
+        },
+        (output_dir / "build_metadata.json").open("w", encoding="utf-8"),
+        ensure_ascii=False,
+        indent=2,
+    )
+    with (output_dir / "token_counts.csv").open("w", encoding="utf-8") as f:
+        f.write("token,count\n")
+        for token, count in counts.most_common():
+            f.write(f"{token},{count}\n")
+
+    print(f"Subjects exported: {len(static_data)}")
+    print(f"Vocabulary size: {len(vocab)}")
+    print(f"Artifacts written to: {output_dir}")
 
 
 def main():
-    parser = HfArgumentParser((BuildArguments,))
-    args, = parser.parse_args_into_dataclasses()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--dataset_kwargs", default="{}")
+    parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--reuse_artifacts_dir", default=None)
+    parser.add_argument("--overwrite_output", action="store_true")
+    parser.add_argument("--num_numeric_buckets", type=int, default=10)
+    parser.add_argument("--min_numeric_values_per_code", type=int, default=20)
+    parser.add_argument("--max_text_values_per_code", type=int, default=200)
+    parser.add_argument("--static_prefixes", default="GENDER,RACE,ETHNICITY,MARITAL")
+    parser.add_argument("--unknown_event_token", default="UNKNOWN_EVENT")
+    parser.add_argument("--empty_context_token", default="NO_EVENT_CONTEXT")
+    parser.add_argument("--samples_per_shard", type=int, default=2000)
+    parser.add_argument("--max_samples", type=int, default=None)
+    parser.add_argument("--num_workers", type=int, default=0)
+    args = parser.parse_args()
 
-    parquet_files = _list_parquet_files(args.input_dir)
-    _ensure_output_dir(args.output_dir, overwrite=args.overwrite_output)
-    output_dir = Path(args.output_dir)
-    static_roots = _parse_static_prefixes(args.static_prefixes)
-
-    is_reuse_mode = bool(args.reuse_artifacts_dir)
-    if is_reuse_mode:
-        base_vocab, quantiles_by_code, interval_estimates = _load_artifacts_from_dir(args.reuse_artifacts_dir)
-        allowed_text_values_by_code: Dict[str, List[str]] = {}
-        _copy_artifact_files(args.reuse_artifacts_dir, args.output_dir)
-        rank0_print(f"Reuse mode enabled. Loaded artifacts from {args.reuse_artifacts_dir}")
-    else:
-        quantiles_by_code, allowed_text_values_by_code, raw_code_counter = _fit_code_statistics(
-            parquet_files,
-            num_numeric_buckets=args.num_numeric_buckets,
-            min_numeric_values_per_code=args.min_numeric_values_per_code,
-            max_text_values_per_code=args.max_text_values_per_code,
-        )
-        interval_estimates = _build_interval_estimates()
-        base_vocab = None
-        with (output_dir / "raw_code_counts.csv").open("w", encoding="utf-8") as f:
-            f.write("code,count\n")
-            for code, count in raw_code_counter.most_common():
-                f.write(f"{code},{count}\n")
-        with (output_dir / "quantiles.json").open("w", encoding="utf-8") as f:
-            json.dump(quantiles_by_code, f, ensure_ascii=False, indent=2)
-        with (output_dir / "interval_estimates.json").open("w", encoding="utf-8") as f:
-            json.dump(interval_estimates, f, ensure_ascii=False, indent=2)
-
-    rank0_print("=" * 88)
-    rank0_print("Build ETHOS Dataset Vocabulary")
-    rank0_print("=" * 88)
-    rank0_print(f"Input dir: {args.input_dir}")
-    rank0_print(f"Output dir: {args.output_dir}")
-    rank0_print(f"Reuse artifacts dir: {args.reuse_artifacts_dir or '(fit new)'}")
-    rank0_print(f"Static roots: {', '.join(static_roots)}")
-
-    aggregate_token_counter: Counter = Counter()
-    aggregate_static_data: Dict[int, dict] = {}
-
-    pbar = tqdm(
-        parquet_files,
-        desc="Processing raw MEDS shards",
-        disable=int(os.environ.get("LOCAL_RANK", "-1")) not in (-1, 0),
+    module_name, target_name = args.dataset.split(":")
+    dataset_fn = getattr(importlib.import_module(module_name), target_name)
+    dataset_kwargs = json.loads(args.dataset_kwargs)
+    dataset = (
+        _ConcatDataset([dataset_fn(**kwargs) for kwargs in dataset_kwargs])
+        if isinstance(dataset_kwargs, list)
+        else dataset_fn(**dataset_kwargs)
     )
-    for parquet_path in pbar:
-        token_counter, static_data = _process_single_parquet(
-            parquet_path,
-            output_dir=output_dir,
-            static_roots=static_roots,
-            quantiles_by_code=quantiles_by_code,
-            allowed_text_values_by_code=allowed_text_values_by_code,
-            reuse_vocab=base_vocab,
-            unknown_event_token=args.unknown_event_token,
-            empty_context_token=args.empty_context_token,
-        )
-        aggregate_token_counter.update(token_counter)
-        aggregate_static_data.update(static_data)
 
-    with (output_dir / STATIC_DATA_FN).open("wb") as f:
-        pickle.dump(aggregate_static_data, f)
-
-    if is_reuse_mode:
-        vocab = base_vocab
-    else:
-        vocab_tokens: List[str] = []
-        vocab_tokens.extend([f"{root}//UNKNOWN" for root in static_roots])
-        for entry in aggregate_static_data.values():
-            for item in entry.values():
-                vocab_tokens.extend(item["code"])
-        vocab_tokens.extend([label for label, _ in TIME_INTERVAL_SPEC])
-        vocab_tokens.extend(
-            [
-                str(ST.TIMELINE_END),
-                args.unknown_event_token,
-                args.empty_context_token,
-            ]
-        )
-        for token, _ in aggregate_token_counter.most_common():
-            vocab_tokens.append(token)
-
-        deduped_vocab = []
-        seen = set()
-        for token in vocab_tokens:
-            if token not in seen:
-                deduped_vocab.append(token)
-                seen.add(token)
-
-        vocab = Vocabulary(deduped_vocab, interval_estimates)
-        vocab.dump(output_dir)
-
-    if is_reuse_mode and not (output_dir / "interval_estimates.json").exists():
-        with (output_dir / "interval_estimates.json").open("w", encoding="utf-8") as f:
-            json.dump(interval_estimates, f, ensure_ascii=False, indent=2)
-    if is_reuse_mode and not (output_dir / "quantiles.json").exists():
-        with (output_dir / "quantiles.json").open("w", encoding="utf-8") as f:
-            json.dump(quantiles_by_code, f, ensure_ascii=False, indent=2)
-
-    with (output_dir / "token_counts.csv").open("w", encoding="utf-8") as f:
-        f.write("token,count\n")
-        for token, count in aggregate_token_counter.most_common():
-            f.write(f"{token},{count}\n")
-
-    processed_parquet_files = sorted(output_dir.glob("*.parquet"))
-    if not processed_parquet_files:
-        raise FileNotFoundError(f"No processed parquet files were written to {output_dir}")
-
-    tensorize_pbar = tqdm(
-        processed_parquet_files,
-        desc="Tensorizing shards",
-        disable=int(os.environ.get("LOCAL_RANK", "-1")) not in (-1, 0),
+    build_from_meds_dataset(
+        dataset,
+        output_dir=args.output_dir,
+        reuse_artifacts_dir=args.reuse_artifacts_dir,
+        overwrite_output=args.overwrite_output,
+        num_numeric_buckets=args.num_numeric_buckets,
+        min_numeric_values_per_code=args.min_numeric_values_per_code,
+        max_text_values_per_code=args.max_text_values_per_code,
+        static_prefixes=args.static_prefixes,
+        unknown_event_token=args.unknown_event_token,
+        empty_context_token=args.empty_context_token,
+        samples_per_shard=args.samples_per_shard,
+        max_samples=args.max_samples,
+        num_workers=args.num_workers,
     )
-    for parquet_path in tensorize_pbar:
-        TimelineDataset.tensorize(parquet_path, output_dir / parquet_path.name, vocab)
-
-    metadata = {
-        "input_dir": str(args.input_dir),
-        "output_dir": str(args.output_dir),
-        "reuse_artifacts_dir": args.reuse_artifacts_dir,
-        "num_numeric_buckets": int(args.num_numeric_buckets),
-        "min_numeric_values_per_code": int(args.min_numeric_values_per_code),
-        "max_text_values_per_code": int(args.max_text_values_per_code),
-        "static_roots": static_roots,
-        "unknown_event_token": args.unknown_event_token,
-        "empty_context_token": args.empty_context_token,
-        "num_subjects": int(len(aggregate_static_data)),
-        "vocab_size": int(len(vocab)),
-    }
-    with (output_dir / "build_metadata.json").open("w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
-
-    rank0_print(f"Subjects exported: {len(aggregate_static_data)}")
-    rank0_print(f"Vocabulary size: {len(vocab)}")
-    rank0_print(f"Artifacts written to: {output_dir}")
 
 
 if __name__ == "__main__":
