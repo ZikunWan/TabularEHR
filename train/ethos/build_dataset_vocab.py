@@ -3,7 +3,6 @@ import os
 import pickle
 import shutil
 import sys
-import enum
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,15 +17,9 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-ETHOS_SRC = os.path.join(PROJECT_ROOT, "ethos-ares", "src")
+ETHOS_SRC = os.path.dirname(os.path.abspath(__file__))
 if ETHOS_SRC not in sys.path:
     sys.path.insert(0, ETHOS_SRC)
-
-if not hasattr(enum, "StrEnum"):
-    class _CompatStrEnum(str, enum.Enum):
-        pass
-
-    enum.StrEnum = _CompatStrEnum
 
 from ethos.constants import STATIC_DATA_FN, SpecialToken as ST
 from ethos.datasets.base import TimelineDataset
