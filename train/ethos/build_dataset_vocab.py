@@ -1,15 +1,12 @@
 import argparse
 import importlib
 import json
-import pickle
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import torch
-from safetensors.torch import save_file
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
@@ -18,7 +15,7 @@ PROJECT_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(THIS_DIR))
 
-from ethos.constants import STATIC_DATA_FN, SpecialToken as ST
+from ethos.constants import SpecialToken as ST
 from ethos.vocabulary import Vocabulary
 
 
@@ -105,17 +102,6 @@ def _iter_samples(dataset, empty_token, max_samples, num_workers):
     loader = DataLoader(source, batch_size=1, shuffle=False, num_workers=num_workers, collate_fn=_first)
     for i, sample in enumerate(loader):
         yield _as_meds_df(sample, i + 1, empty_token)
-
-
-def _iter_chunks(dataset, empty_token, samples_per_shard, max_samples, num_workers):
-    pending, shard_idx = [], 0
-    for df in _iter_samples(dataset, empty_token, max_samples, num_workers):
-        pending.append(df)
-        if len(pending) == samples_per_shard:
-            yield shard_idx, pd.concat(pending, ignore_index=True)
-            pending, shard_idx = [], shard_idx + 1
-    if pending:
-        yield shard_idx, pd.concat(pending, ignore_index=True)
 
 
 def _fit_stats(dataset, empty_token, max_samples, num_workers, num_buckets, min_numeric, max_text):
@@ -241,39 +227,10 @@ def _make_vocab(static_roots, raw_counts, quantiles, text_values, intervals, unk
     return Vocabulary(list(dict.fromkeys(tokens)), intervals)
 
 
-def _save_shard(df, shard_idx, output_dir, vocab):
-    patients = df.groupby("subject_id", sort=False).size().reset_index(name="len")
-    offsets = patients["len"].cumsum().shift(1, fill_value=0).astype(np.int64)
-    save_file(
-        {
-            "tokens": torch.tensor([vocab.stoi[c] for c in df["code"]], dtype=torch.long),
-            "times": torch.tensor(df["time"].astype(np.int64).to_numpy(), dtype=torch.long),
-            "patient_ids": torch.tensor(patients["subject_id"].astype(np.int64).to_numpy(), dtype=torch.long),
-            "patient_offsets": torch.tensor(offsets.to_numpy(), dtype=torch.long),
-        },
-        output_dir / f"{shard_idx:05d}.safetensors",
-    )
-
-
-def _process(dataset, output_dir, vocab, save, empty_token, max_samples, num_workers, samples_per_shard, static_roots, quantiles, text_values, unknown_token):
-    counts, static_data = Counter(), {}
-    for shard_idx, df in tqdm(
-        _iter_chunks(dataset, empty_token, samples_per_shard, max_samples, num_workers),
-        desc="Tokenize MEDS with ETHOS",
-    ):
-        tokenized, shard_counts, shard_static = _tokenize(df, static_roots, quantiles, text_values, vocab, unknown_token, empty_token)
-        counts.update(shard_counts)
-        static_data.update(shard_static)
-        if save:
-            _save_shard(tokenized, shard_idx, output_dir, vocab)
-    return counts, static_data
-
-
 def build_from_meds_dataset(
     dataset,
     *,
     output_dir,
-    reuse_artifacts_dir=None,
     overwrite_output=False,
     num_numeric_buckets=10,
     min_numeric_values_per_code=20,
@@ -281,7 +238,6 @@ def build_from_meds_dataset(
     static_prefixes="GENDER,RACE,ETHNICITY,MARITAL",
     unknown_event_token="UNKNOWN_EVENT",
     empty_context_token="NO_EVENT_CONTEXT",
-    samples_per_shard=2000,
     max_samples=None,
     num_workers=0,
 ):
@@ -292,36 +248,23 @@ def build_from_meds_dataset(
             path.unlink()
 
     static_roots = [x.strip().upper() for x in static_prefixes.split(",") if x.strip()]
-    if reuse_artifacts_dir:
-        reuse_dir = Path(reuse_artifacts_dir)
-        vocab = Vocabulary.from_path(reuse_dir)
-        quantiles = json.load((reuse_dir / "quantiles.json").open())
-        text_values = json.load((reuse_dir / "text_values.json").open())
-        intervals = json.load((reuse_dir / "interval_estimates.json").open())
-    else:
-        quantiles, text_values, raw_counts = _fit_stats(
-            dataset,
-            empty_context_token,
-            max_samples,
-            num_workers,
-            num_numeric_buckets,
-            min_numeric_values_per_code,
-            max_text_values_per_code,
-        )
-        intervals, vocab = _interval_estimates(), None
-        with (output_dir / "raw_code_counts.csv").open("w", encoding="utf-8") as f:
-            f.write("code,count\n")
-            for code, count in raw_counts.most_common():
-                f.write(f"{code},{count}\n")
+    quantiles, text_values, raw_counts = _fit_stats(
+        dataset,
+        empty_context_token,
+        max_samples,
+        num_workers,
+        num_numeric_buckets,
+        min_numeric_values_per_code,
+        max_text_values_per_code,
+    )
+    intervals = _interval_estimates()
+    vocab = _make_vocab(static_roots, raw_counts, quantiles, text_values, intervals, unknown_event_token, empty_context_token)
+    vocab.dump(output_dir)
 
-    if reuse_artifacts_dir:
-        counts, static_data = _process(dataset, output_dir, vocab, True, empty_context_token, max_samples, num_workers, samples_per_shard, static_roots, quantiles, text_values, unknown_event_token)
-    else:
-        vocab = _make_vocab(static_roots, raw_counts, quantiles, text_values, intervals, unknown_event_token, empty_context_token)
-        vocab.dump(output_dir)
-        counts, static_data = _process(dataset, output_dir, vocab, True, empty_context_token, max_samples, num_workers, samples_per_shard, static_roots, quantiles, text_values, unknown_event_token)
-
-    pickle.dump(static_data, (output_dir / STATIC_DATA_FN).open("wb"))
+    with (output_dir / "raw_code_counts.csv").open("w", encoding="utf-8") as f:
+        f.write("code,count\n")
+        for code, count in raw_counts.most_common():
+            f.write(f"{code},{count}\n")
     json.dump(quantiles, (output_dir / "quantiles.json").open("w", encoding="utf-8"), ensure_ascii=False, indent=2)
     json.dump(text_values, (output_dir / "text_values.json").open("w", encoding="utf-8"), ensure_ascii=False, indent=2)
     json.dump(intervals, (output_dir / "interval_estimates.json").open("w", encoding="utf-8"), ensure_ascii=False, indent=2)
@@ -329,23 +272,17 @@ def build_from_meds_dataset(
         {
             "input_source": "meds_dataset",
             "output_dir": str(output_dir),
-            "reuse_artifacts_dir": reuse_artifacts_dir,
-            "num_subjects": len(static_data),
+            "num_subjects": len(dataset) if max_samples is None else min(len(dataset), max_samples),
             "vocab_size": len(vocab),
             "static_roots": static_roots,
-            "samples_per_shard": samples_per_shard,
             "num_workers": num_workers,
         },
         (output_dir / "build_metadata.json").open("w", encoding="utf-8"),
         ensure_ascii=False,
         indent=2,
     )
-    with (output_dir / "token_counts.csv").open("w", encoding="utf-8") as f:
-        f.write("token,count\n")
-        for token, count in counts.most_common():
-            f.write(f"{token},{count}\n")
 
-    print(f"Subjects exported: {len(static_data)}")
+    print(f"Subjects used: {len(dataset) if max_samples is None else min(len(dataset), max_samples)}")
     print(f"Vocabulary size: {len(vocab)}")
     print(f"Artifacts written to: {output_dir}")
 
@@ -355,7 +292,6 @@ def main():
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--dataset_kwargs", default="{}")
     parser.add_argument("--output_dir", required=True)
-    parser.add_argument("--reuse_artifacts_dir", default=None)
     parser.add_argument("--overwrite_output", action="store_true")
     parser.add_argument("--num_numeric_buckets", type=int, default=10)
     parser.add_argument("--min_numeric_values_per_code", type=int, default=20)
@@ -363,7 +299,6 @@ def main():
     parser.add_argument("--static_prefixes", default="GENDER,RACE,ETHNICITY,MARITAL")
     parser.add_argument("--unknown_event_token", default="UNKNOWN_EVENT")
     parser.add_argument("--empty_context_token", default="NO_EVENT_CONTEXT")
-    parser.add_argument("--samples_per_shard", type=int, default=2000)
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=0)
     args = parser.parse_args()
@@ -380,7 +315,6 @@ def main():
     build_from_meds_dataset(
         dataset,
         output_dir=args.output_dir,
-        reuse_artifacts_dir=args.reuse_artifacts_dir,
         overwrite_output=args.overwrite_output,
         num_numeric_buckets=args.num_numeric_buckets,
         min_numeric_values_per_code=args.min_numeric_values_per_code,
@@ -388,7 +322,6 @@ def main():
         static_prefixes=args.static_prefixes,
         unknown_event_token=args.unknown_event_token,
         empty_context_token=args.empty_context_token,
-        samples_per_shard=args.samples_per_shard,
         max_samples=args.max_samples,
         num_workers=args.num_workers,
     )

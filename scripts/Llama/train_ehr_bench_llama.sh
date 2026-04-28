@@ -1,123 +1,69 @@
 #!/bin/bash
 set -euo pipefail
 
-# ===== Editable config =====
-MODEL_PATH="/data/model_weights_public/StanfordShahLab/llama-base-4096-clmbr"
-DATA_DIR="/data/zikun_workspace/mimic-iv-3.1_tabular"
-CHECKPOINT_ROOT="/data/zikun_workspace/checkpoints/ehr_bench"
-DEEPSPEED_CONFIG="/data/zikun_workspace/code/ds_config_zero2.json"
-
-OVERWRITE=true
-FREEZE_ENCODER=false
-USE_PEFT=true
-ITEMID_REPRESENTATION="code"
-TOKENIZER_CONFIG_PATH="/data/zikun_workspace/code/.cache/meds_encoder_tokenizers/ehr_bench/expanded_tokenizer_config.json"
-LORA_R=16
-LORA_ALPHA=32
-LORA_DROPOUT=0.05
-LORA_TARGET_MODULES="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"
-
-MAX_SEQ_LENGTH=4096
-TRAIN_BATCH_SIZE=16
-EVAL_BATCH_SIZE=64
-LEARNING_RATE=2e-5
-NUM_TRAIN_EPOCHS=50
-EARLY_STOPPING_PATIENCE=10
-MAX_TRAIN_SAMPLES=3000
-MAX_EVAL_SAMPLES=1000
-# ===========================
-
-NUM_GPUS="$(nvidia-smi -L 2>/dev/null | wc -l)"
-if [ "$NUM_GPUS" -lt 1 ]; then
-    NUM_GPUS=1
-fi
-
 export TOKENIZERS_PARALLELISM=false
-export WANDB_PROJECT="ehr_bench_meds_encoder_llama"
-
-has_training_result() {
-    local output_dir="$1"
-    if [ -s "$output_dir/classification_head.bin" ] && [ -s "$output_dir/sequence_classification_head_config.json" ]; then
-        return 0
-    fi
-    return 1
-}
+export WANDB_PROJECT=ehr_bench_meds_encoder_llama
 
 cd /data/zikun_workspace/code/train/Llama
 
 for TASK_NAME in \
-    "Inpatient_Mortality" \
-    "LengthOfStay_3day" \
-    "LengthOfStay_7day" \
-    "ICU_Mortality_1day" \
-    "ICU_Mortality_2day" \
-    "ICU_Mortality_3day" \
-    "ICU_Mortality_7day" \
-    "ICU_Mortality_14day" \
-    "ICU_Stay_7day" \
-    "ICU_Stay_14day" \
-    "ICU_Readmission"
-    # "ED_Hospitalization" \
-    # "ED_Inpatient_Mortality" \
-    # "ED_ICU_Tranfer_12hour" \
-    # "ED_Reattendance_3day" \
-    # "ED_Critical_Outcomes" \
-    # "Readmission_30day" \
-    # "Readmission_60day" \
-    
+  Inpatient_Mortality \
+  LengthOfStay_3day \
+  LengthOfStay_7day \
+  ICU_Mortality_1day \
+  ICU_Mortality_2day \
+  ICU_Mortality_3day \
+  ICU_Mortality_7day \
+  ICU_Mortality_14day \
+  ICU_Stay_7day \
+  ICU_Stay_14day \
+  ICU_Readmission \
+  ED_Hospitalization \
+  ED_Inpatient_Mortality \
+  ED_ICU_Tranfer_12hour \
+  ED_Reattendance_3day \
+  ED_Critical_Outcomes \
+  Readmission_30day \
+  Readmission_60day
 do
-    OUTPUT_DIR="${CHECKPOINT_ROOT}/${TASK_NAME}/meds_encoder/llama_base_4096_clmbr"
-    RUN_NAME="ehr_bench_${TASK_NAME}_meds_llama_base_4096_clmbr_peft"
-
-    if has_training_result "$OUTPUT_DIR"; then
-        if [ "$OVERWRITE" = true ]; then
-            echo "[OVERWRITE] Existing checkpoint found for ${TASK_NAME}, retraining: $OUTPUT_DIR"
-        else
-            echo "[SKIP] Existing head-only checkpoint found for ${TASK_NAME}: $OUTPUT_DIR"
-            continue
-        fi
-    fi
-
-    export WANDB_NAME="$RUN_NAME"
-
-    deepspeed --num_gpus="$NUM_GPUS" train_ehr_bench_llama.py \
-        --model_name_or_path "$MODEL_PATH" \
-        --data_dir "$DATA_DIR" \
-        --output_dir "$OUTPUT_DIR" \
-        --run_name "$RUN_NAME" \
-        --report_to wandb \
-        --overwrite_output_dir "$OVERWRITE" \
-        --task_name "$TASK_NAME" \
-        --tokenizer_config_path "$TOKENIZER_CONFIG_PATH" \
-        --freeze_encoder "$FREEZE_ENCODER" \
-        --use_peft "$USE_PEFT" \
-        --lora_r "$LORA_R" \
-        --lora_alpha "$LORA_ALPHA" \
-        --lora_dropout "$LORA_DROPOUT" \
-        --lora_target_modules "$LORA_TARGET_MODULES" \
-        --itemid_representation "$ITEMID_REPRESENTATION" \
-        --max_seq_length "$MAX_SEQ_LENGTH" \
-        --per_device_train_batch_size "$TRAIN_BATCH_SIZE" \
-        --per_device_eval_batch_size "$EVAL_BATCH_SIZE" \
-        --gradient_accumulation_steps 1 \
-        --num_train_epochs "$NUM_TRAIN_EPOCHS" \
-        --learning_rate "$LEARNING_RATE" \
-        --logging_steps 50 \
-        --eval_strategy steps \
-        --eval_steps 50 \
-        --metric_for_best_model eval_auroc \
-        --greater_is_better True \
-        --save_steps 50 \
-        --save_total_limit 2 \
-        --save_strategy steps \
-        --bf16 True \
-        --gradient_checkpointing False \
-        --dataloader_num_workers 8 \
-        --weight_decay 0. \
-        --warmup_ratio 0.03 \
-        --lr_scheduler_type cosine \
-        --deepspeed "$DEEPSPEED_CONFIG" \
-        --early_stopping_patience "$EARLY_STOPPING_PATIENCE" \
-        --max_train_samples "$MAX_TRAIN_SAMPLES" \
-        --max_eval_samples "$MAX_EVAL_SAMPLES"
+  deepspeed --num_gpus="$(nvidia-smi -L 2>/dev/null | wc -l)" train_ehr_bench_llama.py \
+    --model_name_or_path /data/model_weights_public/StanfordShahLab/llama-base-4096-clmbr \
+    --data_dir /data/zikun_workspace/mimic-iv-3.1_tabular \
+    --output_dir "/data/zikun_workspace/checkpoints/ehr_bench/${TASK_NAME}/meds_encoder/llama_base_4096_clmbr" \
+    --run_name "ehr_bench_${TASK_NAME}_meds_llama_base_4096_clmbr_peft" \
+    --report_to wandb \
+    --overwrite_output_dir true \
+    --task_name "$TASK_NAME" \
+    --tokenizer_config_path /data/zikun_workspace/code/.cache/meds_encoder_tokenizers/ehr_bench/expanded_tokenizer_config.json \
+    --freeze_encoder false \
+    --use_peft true \
+    --lora_r 16 \
+    --lora_alpha 32 \
+    --lora_dropout 0.05 \
+    --lora_target_modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj \
+    --itemid_representation code \
+    --max_seq_length 4096 \
+    --per_device_train_batch_size 16 \
+    --per_device_eval_batch_size 64 \
+    --gradient_accumulation_steps 1 \
+    --num_train_epochs 50 \
+    --learning_rate 2e-5 \
+    --logging_steps 50 \
+    --eval_strategy steps \
+    --eval_steps 50 \
+    --metric_for_best_model eval_auroc \
+    --greater_is_better true \
+    --save_steps 50 \
+    --save_total_limit 2 \
+    --save_strategy steps \
+    --bf16 true \
+    --gradient_checkpointing false \
+    --dataloader_num_workers 8 \
+    --weight_decay 0. \
+    --warmup_ratio 0.03 \
+    --lr_scheduler_type cosine \
+    --deepspeed /data/zikun_workspace/code/ds_config_zero2.json \
+    --early_stopping_patience 10 \
+    --max_train_samples 3000 \
+    --max_eval_samples 1000
 done
