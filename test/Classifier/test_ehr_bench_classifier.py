@@ -1,12 +1,10 @@
 import os
 import sys
-import torch
-import torch.nn as nn
 import pandas as pd
 import json
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Optional
 from sklearn.metrics import roc_auc_score, accuracy_score, average_precision_score
 from transformers import HfArgumentParser, set_seed, Trainer, TrainingArguments
 
@@ -17,7 +15,7 @@ sys.path.append(project_root)
 
 from dataset.mimic.mimic_dataset import MIMICIV
 from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import TableEncoderConfig
+from models.TableEncoder.config import LongTableEncoderMemoryConfig
 
 from utils.collate import create_collate_fn
 from utils.load_embedding import load_embedding_cache
@@ -27,7 +25,6 @@ LABEL_MAP = {"yes": 1, "no": 0}
 
 @dataclass
 class ModelArguments:
-    attention_mode: str = field(default='1d', metadata={"help": "Attention mode: '1d', '2d_grid', or 'hierarchical'"})
     use_lora: bool = field(default=False, metadata={"help": "Set True if the checkpoint was saved with LoRA (PEFT) and adapter_config.json is absent/needs override"})
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to base transformer weights."})
 
@@ -51,6 +48,7 @@ class DataArguments:
     )
     checkpoint_dir: str = field(default=None, metadata={"help": "Path to the checkpoint directory"})
     batch_size: int = field(default=64, metadata={"help": "Evaluation batch size"})
+    max_table_len: Optional[int] = field(default=None, metadata={"help": "Keep only the most recent N table rows before encoding"})
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
     type_vocab_file: str = field(
         default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/data/type_vocab.json",
@@ -86,14 +84,7 @@ def main():
     print(f"Loading task '{data_args.task_name}' from {sample_info_path}...")
     
     # 2. Load Embedding Cache
-    try:
-        embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
-    except Exception as e:
-        print(f"Warning: Could not load embedding cache from {data_args.embedding_cache}. Error: {e}")
-        text_dim = None
-
-    default_config = TableEncoderConfig()
-    model_text_dim = default_config.text_dim if text_dim is None else text_dim
+    _, text_dim = load_embedding_cache(data_args.embedding_cache)
 
     # 3. Load Type Vocab
     with open(data_args.type_vocab_file, 'r') as f:
@@ -111,9 +102,8 @@ def main():
     print(f"Test dataset size: {len(test_dataset)}")
 
     # 5. Model Config — binary classification
-    encoder_config = TableEncoderConfig(
-        text_dim=model_text_dim,
-        attention_mode=model_args.attention_mode,
+    encoder_config = LongTableEncoderMemoryConfig(
+        text_dim=text_dim,
         type_vocab_size=len(type_vocab),
         num_classes=1,                       
         problem_type="single_label_classification"
@@ -141,7 +131,7 @@ def main():
     )
     
     # 7. Collate function mapped identical to training script
-    collate_fn = create_collate_fn(type_vocab, label_map=LABEL_MAP)
+    collate_fn = create_collate_fn(type_vocab, label_map=LABEL_MAP, max_table_len=data_args.max_table_len)
 
     trainer = Trainer(
         model=model,

@@ -33,17 +33,23 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, length):
 
 class QFormer(nn.Module):
     def __init__(self, dim,
-                    num_queries,
+                    max_queries,
+                    tokens_per_query=32,
                     dim_head=64,
                     mlp_type='identity',
                     dim_out=None):
         super().__init__()
-        self.num_queries = num_queries
+        if max_queries <= 0:
+            raise ValueError("max_queries must be positive")
+        if tokens_per_query <= 0:
+            raise ValueError("tokens_per_query must be positive")
+        self.max_queries = max_queries
+        self.tokens_per_query = tokens_per_query
         self.dim_head = dim_head
         self.encoder_hidden_size = dim
         self.decoder_hidden_size = dim
 
-        self.query = nn.Parameter(torch.randn(num_queries, self.decoder_hidden_size))
+        self.query = nn.Parameter(torch.randn(max_queries, self.decoder_hidden_size))
         trunc_normal_(self.query, std=.02)
         
         self.kv_proj = nn.Linear(self.encoder_hidden_size, self.decoder_hidden_size, bias=False)
@@ -87,10 +93,19 @@ class QFormer(nn.Module):
         key_tensor = projected_context
         value_tensor = projected_context
 
-        batch_size = projected_context.shape[0]
-        query_tensor = self.query.unsqueeze(0).repeat(batch_size, 1, 1)
+        batch_size, seq_len = projected_context.shape[:2]
+        if context_mask is not None:
+            valid_len = context_mask.long().sum(dim=1).max().item()
+        else:
+            valid_len = seq_len
+        num_queries = min(
+            self.max_queries,
+            max(1, (int(valid_len) + self.tokens_per_query - 1) // self.tokens_per_query),
+        )
+
+        query_tensor = self.query[:num_queries].unsqueeze(0).repeat(batch_size, 1, 1)
         
-        query_pos_embeds = get_1d_sincos_pos_embed_from_grid(self.decoder_hidden_size, self.num_queries)
+        query_pos_embeds = get_1d_sincos_pos_embed_from_grid(self.decoder_hidden_size, num_queries)
         query_pos_embeds = query_pos_embeds.to(dtype=query_tensor.dtype, device=query_tensor.device)
         query_pos_embeds.requires_grad_(False)
         
@@ -103,3 +118,20 @@ class QFormer(nn.Module):
         attention_output = self.attn(query_tensor, key_tensor, value_tensor, key_padding_mask)[0]
         mlp_output = self.mlp(attention_output)
         return self.out_proj(mlp_output)
+
+
+class QFormerAdapter(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.qformer = QFormer(
+            config.dim,
+            config.max_queries,
+            tokens_per_query=config.tokens_per_query,
+            dim_head=config.dim_head,
+            dim_out=config.dim_out,
+        )
+
+    def forward(self, hidden_states, attention_mask=None):
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(dtype=hidden_states.dtype)
+        return self.qformer(hidden_states, attention_mask)

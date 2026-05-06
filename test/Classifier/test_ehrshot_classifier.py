@@ -1,12 +1,10 @@
 import os
 import sys
-import torch
-import torch.nn as nn
 import pandas as pd
 import json
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Optional
 from sklearn.metrics import roc_auc_score, accuracy_score
 from transformers import HfArgumentParser, set_seed, Trainer, TrainingArguments
 
@@ -19,15 +17,14 @@ if ehrshot_dataset_root not in sys.path:
 
 from ehrshot_dataset import EHRSHOTDataset
 from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import TableEncoderConfig
+from models.TableEncoder.config import LongTableEncoderMemoryConfig
 
 from utils.collate import create_collate_fn
-from utils.load_embedding import load_embedding_cache, get_embedding
+from utils.load_embedding import load_embedding_cache
 from utils.weight_loader import load_model_weights
 
 @dataclass
 class ModelArguments:
-    attention_mode: str = field(default='1d', metadata={"help": "Attention mode: '1d', '2d_grid', or 'hierarchical'"})
     use_lora: bool = field(default=False, metadata={"help": "Set True if the checkpoint was saved with LoRA (PEFT) and adapter_config.json is absent/needs override"})
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to base transformer weights (e.g., google/tapas-base) if the model requires them before loading the classifier head/adapter."})
 
@@ -39,6 +36,7 @@ class DataArguments:
                                   metadata={"help": "Path to pre-computed embedding cache"})
     checkpoint_dir: str = field(default=None, metadata={"help": "Path to the checkpoint directory"})
     batch_size: int = field(default=64, metadata={"help": "Evaluation batch size"})
+    max_table_len: Optional[int] = field(default=None, metadata={"help": "Keep only the most recent N table rows before encoding"})
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
     task_name: str = field(default="lab_anemia", metadata={"help": "The specific task name to test"})
     type_vocab_file: str = field(default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/data/type_vocab.json", metadata={"help": "Path to type vocabulary JSON file"})
@@ -61,15 +59,12 @@ def main():
     print(f"Task: {data_args.task_name}")
 
     # 1. Load Embedding Cache
-    embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
+    _, text_dim = load_embedding_cache(data_args.embedding_cache)
     
     # Load Type Vocab defaults
     type_vocab = None
     with open(data_args.type_vocab_file, 'r') as f:
         type_vocab = json.load(f)
-
-    default_config = TableEncoderConfig()
-    model_text_dim = default_config.text_dim if text_dim is None else text_dim
 
     if not os.path.exists(data_args.split_info_path):
         raise FileNotFoundError(f"Test split file not found: {data_args.split_info_path}")
@@ -89,9 +84,8 @@ def main():
 
     num_classes = 4 if data_args.task_name.startswith("lab_") else 1
 
-    encoder_config = TableEncoderConfig(
-        text_dim=model_text_dim,
-        attention_mode=model_args.attention_mode,
+    encoder_config = LongTableEncoderMemoryConfig(
+        text_dim=text_dim,
         type_vocab_size=len(type_vocab),
         num_classes=num_classes,
         problem_type="single_label_classification"
@@ -120,7 +114,7 @@ def main():
     trainer = Trainer(
         model=model,
         args=training_args,
-        data_collator=create_collate_fn(type_vocab),
+        data_collator=create_collate_fn(type_vocab, max_table_len=data_args.max_table_len),
     )
     
     print("Starting evaluation...")

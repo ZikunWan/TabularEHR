@@ -7,6 +7,9 @@ torchrun --nproc_per_node=$NUM_GPUS train_renji_classifier.py \
     --output_dir "/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/renji_classifier_1d_full_with_0.3_ratio" \
     --run_name "full_0.3_ratio_pretraining" \
     --pretrained_path "/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/stage1_contrastive_learning-v6_with_0.3_ratio/model.safetensors" \
+    --max_table_len 4096 \
     --per_device_train_batch_size 16 \
     --num_train_epochs 25 \
-    --learning_rate 2e-4
+    --learning_rate 2e-4 \
+    --lr_scheduler_type "cosine" \
+    --warmup_steps 100

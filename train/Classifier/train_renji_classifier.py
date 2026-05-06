@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import logging
 import torch
 import torch.nn as nn
 import pandas as pd
@@ -9,6 +10,7 @@ from typing import Optional, List, Dict, Any
 from peft import LoraConfig, get_peft_model, PeftModel
 import glob
 from transformers import Trainer, TrainingArguments, HfArgumentParser, set_seed
+from transformers.utils import logging as hf_logging
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -19,16 +21,24 @@ def rank0_print(*args, **kwargs):
     if local_rank in [-1, 0]:
         print(*args, **kwargs)
 
+
+def quiet_non_main_process_logs():
+    local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+    if local_rank not in [-1, 0]:
+        hf_logging.set_verbosity_error()
+        logging.getLogger("transformers").setLevel(logging.ERROR)
+        logging.getLogger("accelerate").setLevel(logging.ERROR)
+        logging.getLogger("deepspeed").setLevel(logging.ERROR)
+
 from dataset.renji_dataset import RenjiDataset
 from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import TableEncoderConfig
+from models.TableEncoder.config import LongTableEncoder1DConfig
 from utils.weight_loader import load_model_weights
 from utils.load_embedding import load_embedding_cache, get_embedding
 from utils.collate import create_collate_fn
 
 @dataclass
 class ModelArguments:
-    attention_mode: str = field(default='1d', metadata={"help": "Attention mode: '1d', '2d_grid', or 'hierarchical'"})
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to pre-trained model checkpoint (safetensors or bin) or TAPAS base"})
     
     # LoRA options
@@ -44,6 +54,7 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
+    max_table_len: int = field(metadata={"help": "Keep only the most recent N table rows before encoding"})
     data_dir: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/Renji")
     embedding_cache: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/.cache/embeddings/renji/text_embeddings.pt")
     max_train_samples: Optional[int] = field(default=None)
@@ -58,8 +69,12 @@ class CustomTrainingArguments(TrainingArguments):
 def main():
     parser = HfArgumentParser((ModelArguments, DataArguments, CustomTrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    quiet_non_main_process_logs()
     
-    training_args.warmup_ratio = 0.1
+    training_args.lr_scheduler_type = "cosine"
+    if training_args.warmup_steps == 0:
+        training_args.warmup_steps = 100
+    training_args.warmup_ratio = 0.0
     training_args.weight_decay = 0.01
     training_args.seed = 42
     training_args.logging_strategy = "steps"
@@ -72,8 +87,6 @@ def main():
     training_args.remove_unused_columns = False
     training_args.report_to = ["wandb"]
     training_args.save_safetensors = True
-        
-    model_args.attention_mode = "1d"
     
     if training_args.wandb_project:
         os.environ["WANDB_PROJECT"] = training_args.wandb_project
@@ -91,9 +104,8 @@ def main():
         max_samples=data_args.max_train_samples, task_mode='multi_label'
     )
 
-    encoder_config = TableEncoderConfig(
+    encoder_config = LongTableEncoder1DConfig(
         text_dim=text_dim,
-        attention_mode=model_args.attention_mode,
         type_vocab_size=len(type_vocab),
         num_points=len(RenjiDataset.ALL_POINTS),
         num_metrics=len(RenjiDataset.ALL_METRICS),
@@ -123,7 +135,7 @@ def main():
     trainer = Trainer(
         model=model, args=training_args,
         train_dataset=train_dataset,
-        data_collator=create_collate_fn(type_vocab),
+        data_collator=create_collate_fn(type_vocab, max_table_len=data_args.max_table_len),
     )
 
     resume_ckpt = None

@@ -1,10 +1,12 @@
 import os
 import sys
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
 from peft import LoraConfig, get_peft_model
 from transformers import Trainer, TrainingArguments, HfArgumentParser, set_seed
+from transformers.utils import logging as hf_logging
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,12 +17,21 @@ def rank0_print(*args, **kwargs):
     if local_rank in [-1, 0]:
         print(*args, **kwargs)
 
+
+def quiet_non_main_process_logs():
+    local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+    if local_rank not in [-1, 0]:
+        hf_logging.set_verbosity_error()
+        logging.getLogger("transformers").setLevel(logging.ERROR)
+        logging.getLogger("accelerate").setLevel(logging.ERROR)
+        logging.getLogger("deepspeed").setLevel(logging.ERROR)
+
 from dataset.mimic_iv_cdm.mimic_iv_cdm_dataset import MIMICIVCDM
 from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import TableEncoderConfig
-from utils.load_embedding import load_embedding_cache, get_embedding
+from models.TableEncoder.config import LongTableEncoder1DConfig
+from utils.load_embedding import load_embedding_cache
 from utils.samplers import TrainerWithBatchSampler, build_train_batch_sampler
-from utils.weight_loader import infer_pretrained_dim_out, load_model_weights
+from utils.weight_loader import load_model_weights
 from utils.collate import create_collate_fn
 
 LABEL_MAP = {
@@ -34,8 +45,8 @@ NUM_CLASSES = len(LABEL_MAP)
 
 @dataclass
 class ModelArguments:
-    attention_mode: str = field(default='1d', metadata={"help": "Attention mode: '1d', '2d_grid', or 'hierarchical'"})
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to pre-trained model checkpoint (safetensors or bin)"})
+    dim_out: Optional[int] = field(default=None, metadata={"help": "Classifier/encoder output dimension. Use None to keep config.dim."})
     use_lora: bool = field(default=False, metadata={"help": "Apply LoRA adapters to encoder linear layers via peft"})
     lora_r: int = field(default=16, metadata={"help": "LoRA rank"})
     lora_alpha: int = field(default=32, metadata={"help": "LoRA alpha (scaling = alpha/r)"})
@@ -47,6 +58,7 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
+    max_table_len: int = field(metadata={"help": "Keep only the most recent N table rows before encoding"})
     data_dir: str = field(
         default="/data/EHR_data_public/mimic-iv-cdm",
         metadata={"help": "Root directory for MIMIC-IV-CDM data"}
@@ -75,9 +87,13 @@ class CustomTrainingArguments(TrainingArguments):
 def main():
     parser = HfArgumentParser((ModelArguments, DataArguments, CustomTrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    quiet_non_main_process_logs()
 
     # Default training settings
-    training_args.warmup_ratio = 0.1
+    training_args.lr_scheduler_type = "cosine"
+    if training_args.warmup_steps == 0:
+        training_args.warmup_steps = 100
+    training_args.warmup_ratio = 0.0
     training_args.weight_decay = 0.01
     training_args.seed = 42
     training_args.eval_strategy = "no"
@@ -86,11 +102,10 @@ def main():
     training_args.save_strategy = "steps"
     training_args.save_total_limit = 2
     training_args.bf16 = True
-    training_args.dataloader_num_workers = 4
+    training_args.dataloader_num_workers = 8
     training_args.remove_unused_columns = False
     training_args.report_to = ["wandb"]
     training_args.save_safetensors = True
-    model_args.attention_mode = "1d"
 
     set_seed(training_args.seed)
 
@@ -98,10 +113,7 @@ def main():
         os.environ["WANDB_PROJECT"] = training_args.wandb_project
 
     # 1. Load Embedding Cache
-    embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
-
-    default_config = TableEncoderConfig()
-    model_text_dim = default_config.text_dim if text_dim is None else text_dim
+    _, text_dim = load_embedding_cache(data_args.embedding_cache)
 
     # 2. Load Type Vocab
     type_vocab = None
@@ -122,15 +134,10 @@ def main():
     rank0_print(f"Train dataset size: {len(train_dataset)}")
 
     # 4. Model
-    pretrained_dim_out = infer_pretrained_dim_out(model_args.pretrained_path)
-    if pretrained_dim_out is not None:
-        rank0_print(f"Restoring dim_out={pretrained_dim_out} from pretrained checkpoint.")
-
-    encoder_config = TableEncoderConfig(
-        text_dim=model_text_dim,
-        attention_mode=model_args.attention_mode,
+    encoder_config = LongTableEncoder1DConfig(
+        text_dim=text_dim,
         type_vocab_size=len(type_vocab),
-        dim_out=pretrained_dim_out,
+        dim_out=model_args.dim_out,
         num_classes=NUM_CLASSES,
         problem_type="single_label_classification"
     )
@@ -156,7 +163,7 @@ def main():
         rank0_print("LoRA applied.")
 
     # 7. Trainer
-    collate_fn = create_collate_fn(type_vocab, label_map=LABEL_MAP)
+    collate_fn = create_collate_fn(type_vocab, label_map=LABEL_MAP, max_table_len=data_args.max_table_len)
 
     trainer_cls = Trainer
     trainer_kwargs = {}

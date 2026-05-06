@@ -1,10 +1,12 @@
 import os
 import sys
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
 from peft import LoraConfig, get_peft_model
 from transformers import Trainer, TrainingArguments, HfArgumentParser, set_seed, EarlyStoppingCallback
+from transformers.utils import logging as hf_logging
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,10 +18,19 @@ def rank0_print(*args, **kwargs):
     if local_rank in [-1, 0]:
         print(*args, **kwargs)
 
+
+def quiet_non_main_process_logs():
+    local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+    if local_rank not in [-1, 0]:
+        hf_logging.set_verbosity_error()
+        logging.getLogger("transformers").setLevel(logging.ERROR)
+        logging.getLogger("accelerate").setLevel(logging.ERROR)
+        logging.getLogger("deepspeed").setLevel(logging.ERROR)
+
 from dataset.eicu.eicu_dataset import EICUDataset
 from dataset.eicu.task_info import get_task_info
 from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import TableEncoderConfig
+from models.TableEncoder.config import LongTableEncoder1DConfig
 from utils.load_embedding import load_embedding_cache
 from utils.metrics import compute_classification_metrics
 from utils.samplers import TrainerWithBatchSampler, build_train_batch_sampler
@@ -28,7 +39,6 @@ from utils.collate import create_collate_fn
 
 @dataclass
 class ModelArguments:
-    attention_mode: str = field(default='1d', metadata={"help": "Attention mode: '1d', '2d_grid', or 'hierarchical'"})
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to pre-trained model checkpoint"})
     use_lora: bool = field(default=False, metadata={"help": "Apply LoRA adapters to encoder"})
     lora_r: int = field(default=16, metadata={"help": "LoRA rank"})
@@ -41,20 +51,21 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
+    max_table_len: int = field(metadata={"help": "Keep only the most recent N table rows before encoding"})
     data_dir: str = field(
-        default="/home/ma-user/sfs_turbo/Data/eicu-crd/2.0",
+        default="/data/EHR_data_public/eicu-crd/2.0",
         metadata={"help": "Root directory for eICU data"}
     )
     train_info_path: str = field(
-        default="/home/ma-user/sfs_turbo/sai6/zkwan/eicu-crd/processed/sample_info_train.json", 
+        default="/data/zikun_workspace/eicu-crd/processed/sample_info_train.json", 
         metadata={"help": "Path to training sample info JSON/CSV"}
     )
     processed_dir: str = field(
-        default="/home/ma-user/sfs_turbo/sai6/zkwan/eicu-crd/processed",
+        default="/data/zikun_workspace/eicu-crd/processed",
         metadata={"help": "Path to processed eICU directory containing patients/ and sample_info_*.json"}
     )
     val_info_path: str = field(
-        default="/home/ma-user/sfs_turbo/sai6/zkwan/eicu-crd/processed/sample_info_val.json", 
+        default="/data/zikun_workspace/eicu-crd/processed/sample_info_val.json", 
         metadata={"help": "Path to validation sample info JSON/CSV"}
     )
     task_name: str = field(
@@ -66,7 +77,7 @@ class DataArguments:
         metadata={"help": "Path to pre-computed embedding cache"}
     )
     type_vocab_file: str = field(
-        default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/data/type_vocab.json",
+        default="/data/zikun_workspace/code/data/type_vocab.json",
         metadata={"help": "Path to unified type vocabulary JSON file"}
     )
     max_train_samples: Optional[int] = field(default=None, metadata={"help": "Limit training samples"})
@@ -85,9 +96,13 @@ class CustomTrainingArguments(TrainingArguments):
 def main():
     parser = HfArgumentParser((ModelArguments, DataArguments, CustomTrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    quiet_non_main_process_logs()
 
     # Default training settings
-    training_args.warmup_ratio = 0.1
+    training_args.lr_scheduler_type = "cosine"
+    if training_args.warmup_steps == 0:
+        training_args.warmup_steps = 100
+    training_args.warmup_ratio = 0.0
     training_args.weight_decay = 0.01
     training_args.eval_strategy = "steps"
     training_args.eval_steps = 100
@@ -95,9 +110,9 @@ def main():
     training_args.logging_steps = 10
     training_args.save_strategy = "steps"
     training_args.save_steps = 100
-    training_args.save_total_limit = 2
+    training_args.save_total_limit = 1
     training_args.bf16 = True
-    training_args.dataloader_num_workers = 4
+    training_args.dataloader_num_workers = 16
     training_args.remove_unused_columns = False
     
     # Enforce safetensors saving and best model logic
@@ -106,10 +121,8 @@ def main():
         training_args.greater_is_better = True
         training_args.load_best_model_at_end = True
     
-    if training_args.report_to != ["none"]:
-        training_args.report_to = ["wandb"]
+    training_args.report_to = ["wandb"]
     training_args.save_safetensors = True
-    model_args.attention_mode = "1d"
 
     set_seed(training_args.seed)
 
@@ -117,15 +130,7 @@ def main():
         os.environ["WANDB_PROJECT"] = training_args.wandb_project
 
     # 1. Load Embedding Cache
-    # We try loading the cache, if it fails because it doesn't exist, we fallback
-    try:
-        embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
-    except Exception as e:
-        rank0_print(f"Warning: Failed to load embedding cache from {data_args.embedding_cache}. Using default config dimension.")
-        text_dim = None
-
-    default_config = TableEncoderConfig()
-    model_text_dim = default_config.text_dim if text_dim is None else text_dim
+    _, text_dim = load_embedding_cache(data_args.embedding_cache)
 
     # 2. Load Type Vocab
     with open(data_args.type_vocab_file, 'r') as f:
@@ -191,9 +196,8 @@ def main():
     rank0_print(f"Num classes: {num_classes}, Problem type: {problem_type}")
 
     # 4. Model Config
-    encoder_config = TableEncoderConfig(
-        text_dim=model_text_dim,
-        attention_mode=model_args.attention_mode,
+    encoder_config = LongTableEncoder1DConfig(
+        text_dim=text_dim,
         type_vocab_size=len(type_vocab),
         num_classes=num_classes,
         problem_type=problem_type
@@ -221,7 +225,7 @@ def main():
         rank0_print("LoRA applied successfully.")
 
     # 7. Trainer Setup
-    collate_fn = create_collate_fn(type_vocab, label_map=label_map)
+    collate_fn = create_collate_fn(type_vocab, label_map=label_map, max_table_len=data_args.max_table_len)
 
     callbacks = []
     if getattr(training_args, "early_stopping_patience", 0) > 0 and training_args.eval_strategy != "no":

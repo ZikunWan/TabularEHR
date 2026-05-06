@@ -4,7 +4,6 @@
 # test_renji.py auto-detects LoRA by checking for adapter_config.json.
 
 CHECKPOINT_DIR="/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/renji_classifier_1d_full_with_0.3_ratio"
-ATTENTION_MODE="1d"
 SPLIT="test"
 BATCH_SIZE=32
 TASK_MODE="multi_task"
@@ -15,12 +14,11 @@ SEED=42
 
 echo "================================================="
 echo "Evaluating checkpoint: $CHECKPOINT_DIR"
-echo "attention_mode=$ATTENTION_MODE  split=$SPLIT"
+echo "split=$SPLIT"
 echo "================================================="
 
 python test_renji.py \
     --checkpoint_dir "$CHECKPOINT_DIR" \
-    --attention_mode "$ATTENTION_MODE" \
     --batch_size $BATCH_SIZE \
     --task_mode $TASK_MODE \
     --split $SPLIT \

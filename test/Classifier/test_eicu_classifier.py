@@ -1,7 +1,5 @@
 import os
 import sys
-import torch
-import torch.nn as nn
 import pandas as pd
 import json
 import numpy as np
@@ -16,7 +14,7 @@ sys.path.append(project_root)
 
 from dataset.eicu.eicu_dataset import EICUDataset
 from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import TableEncoderConfig
+from models.TableEncoder.config import LongTableEncoderMemoryConfig
 
 from utils.collate import create_collate_fn
 from utils.load_embedding import load_embedding_cache
@@ -24,7 +22,6 @@ from utils.weight_loader import load_model_weights
 
 @dataclass
 class ModelArguments:
-    attention_mode: str = field(default='1d', metadata={"help": "Attention mode: '1d', '2d_grid', or 'hierarchical'"})
     use_lora: bool = field(default=False, metadata={"help": "Set True if the checkpoint was saved with LoRA (PEFT)"})
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to base transformer weights (e.g., google/tapas-base)."})
 
@@ -37,6 +34,7 @@ class DataArguments:
     embedding_cache: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/.cache/embeddings/eicu/text_embeddings.pt", metadata={"help": "Path to pre-computed embedding cache"})
     checkpoint_dir: str = field(default=None, metadata={"help": "Path to the checkpoint directory"})
     batch_size: int = field(default=64, metadata={"help": "Evaluation batch size"})
+    max_table_len: Optional[int] = field(default=None, metadata={"help": "Keep only the most recent N table rows before encoding"})
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
     task_name: str = field(default="mortality", metadata={"help": "The specific task name to test"})
     type_vocab_file: str = field(default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/data/type_vocab.json", metadata={"help": "Path to type vocabulary JSON file"})
@@ -59,19 +57,12 @@ def main():
     print(f"Task: {data_args.task_name}")
 
     # 1. Load Embedding Cache
-    try:
-        embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
-    except Exception as e:
-        print(f"Warning: Failed to load embedding cache from {data_args.embedding_cache}. Using default config dimension.")
-        text_dim = None
+    _, text_dim = load_embedding_cache(data_args.embedding_cache)
 
     # Load Type Vocab defaults
     type_vocab = None
     with open(data_args.type_vocab_file, 'r') as f:
         type_vocab = json.load(f)
-
-    default_config = TableEncoderConfig()
-    model_text_dim = default_config.text_dim if text_dim is None else text_dim
 
     # 2. Load val + test split and merge them
     print(f"Loading eICU dataset from {data_args.data_dir}...")
@@ -145,9 +136,8 @@ def main():
     print(f"Task type: {task_type}")
     print(f"Num classes: {num_classes}, Problem type: {problem_type}")
 
-    encoder_config = TableEncoderConfig(
-        text_dim=model_text_dim,
-        attention_mode=model_args.attention_mode,
+    encoder_config = LongTableEncoderMemoryConfig(
+        text_dim=text_dim,
         type_vocab_size=len(type_vocab),
         num_classes=num_classes,
         problem_type=problem_type
@@ -176,7 +166,7 @@ def main():
     trainer = Trainer(
         model=model,
         args=training_args,
-        data_collator=create_collate_fn(type_vocab, label_map=label_map),
+        data_collator=create_collate_fn(type_vocab, label_map=label_map, max_table_len=data_args.max_table_len),
     )
     
     print("Starting evaluation...")

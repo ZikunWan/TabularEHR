@@ -28,8 +28,9 @@ from transformers import (
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-from models.TableEncoder.encoder import LongTableEncoder
-from models.TableEncoder.config import TableEncoderConfig
+from models.TableEncoder.adapter import QFormerAdapter
+from models.TableEncoder.config import LongTableEncoderMemoryConfig
+from models.TableEncoder.encoder import LongTableEncoderMemory
 from dataset.mimic.mimic_dataset import MIMICIV
 from utils.collate import build_table_token_tensors
 
@@ -254,13 +255,14 @@ class ContrastiveModel(PreTrainedModel):
                       MIMICIV(return_table=False) sample['input']
     """
 
-    config_class = TableEncoderConfig
+    config_class = LongTableEncoderMemoryConfig
     base_model_prefix = "encoder"
 
-    def __init__(self, config: TableEncoderConfig, encoder: nn.Module,
+    def __init__(self, config: LongTableEncoderMemoryConfig, encoder: nn.Module,
                  temperature=0.07, embedding_matrix=None):
         super().__init__(config)
         self.encoder = encoder
+        self.adapter = QFormerAdapter(config)
         self.temperature = temperature
         pool_hidden_size = config.dim_out if getattr(config, "dim_out", None) else config.dim
         self.table_pooling = AttentionPooling(pool_hidden_size)
@@ -281,11 +283,12 @@ class ContrastiveModel(PreTrainedModel):
         unit_emb = self.text_embedding(unit_ids)
         value_emb = self.text_embedding(value_text_ids)
 
-        query_embeddings = self.encoder(
+        hidden_states, hidden_mask = self.encoder(
             item_emb, unit_emb, value_emb,
             times, numeric_values, numeric_mask,
-            seq_mask, type_ids=type_ids
+            seq_mask, type_ids=type_ids, return_mask=True
         )
+        query_embeddings = self.adapter(hidden_states, hidden_mask)
         return self.table_pooling(query_embeddings)
 
     def forward(self, item_ids, unit_ids, value_text_ids, times,
@@ -787,11 +790,11 @@ def main():
     # ------------------------------------------------------------------ #
     # 2.  Table encoder
     # ------------------------------------------------------------------ #
-    encoder_cfg = TableEncoderConfig(
+    encoder_cfg = LongTableEncoderMemoryConfig(
         dim_out=model_args.projector_hidden_size,
         type_vocab_size=type_vocab_size,
     )
-    batch_tabular_model = LongTableEncoder(config=encoder_cfg)
+    batch_tabular_model = LongTableEncoderMemory(config=encoder_cfg)
 
     model = ContrastiveModel(
         config=encoder_cfg,

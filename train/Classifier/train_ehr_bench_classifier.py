@@ -1,11 +1,13 @@
 import os
 import sys
 import json
+import logging
 import pandas as pd
 from dataclasses import dataclass, field
 from typing import Optional
 from peft import LoraConfig, get_peft_model
 from transformers import Trainer, TrainingArguments, HfArgumentParser, set_seed, EarlyStoppingCallback
+from transformers.utils import logging as hf_logging
 from torch.utils.data import Dataset
 
 # Add project root to path
@@ -17,9 +19,18 @@ def rank0_print(*args, **kwargs):
     if local_rank in [-1, 0]:
         print(*args, **kwargs)
 
+
+def quiet_non_main_process_logs():
+    local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+    if local_rank not in [-1, 0]:
+        hf_logging.set_verbosity_error()
+        logging.getLogger("transformers").setLevel(logging.ERROR)
+        logging.getLogger("accelerate").setLevel(logging.ERROR)
+        logging.getLogger("deepspeed").setLevel(logging.ERROR)
+
 from dataset.mimic.mimic_dataset import MIMICIV
 from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import TableEncoderConfig
+from models.TableEncoder.config import LongTableEncoder1DConfig
 from utils.load_embedding import load_embedding_cache
 from utils.metrics import compute_classification_metrics
 from utils.samplers import TrainerWithBatchSampler, build_train_batch_sampler
@@ -67,7 +78,6 @@ class LabelFieldAdapter(Dataset):
 
 @dataclass
 class ModelArguments:
-    attention_mode: str = field(default='1d', metadata={"help": "Attention mode: '1d', '2d_grid', or 'hierarchical'"})
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to pre-trained model checkpoint"})
     use_lora: bool = field(default=False, metadata={"help": "Apply LoRA adapters to encoder"})
     lora_r: int = field(default=16, metadata={"help": "LoRA rank"})
@@ -80,6 +90,7 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
+    max_table_len: int = field(metadata={"help": "Keep only the most recent N table rows before encoding"})
     data_dir: str = field(
         default="/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular",
         metadata={"help": "Root directory for MIMIC-IV tabular data"}
@@ -119,13 +130,17 @@ class CustomTrainingArguments(TrainingArguments):
 def main():
     parser = HfArgumentParser((ModelArguments, DataArguments, CustomTrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    quiet_non_main_process_logs()
 
     # Validate task
     if data_args.task_name not in ALL_RISK_PREDICTION_TASKS:
         raise ValueError(f"task_name '{data_args.task_name}' not in supported risk prediction tasks: {ALL_RISK_PREDICTION_TASKS}")
 
     # Default training settings
-    training_args.warmup_ratio = 0.1
+    training_args.lr_scheduler_type = "cosine"
+    if training_args.warmup_steps == 0:
+        training_args.warmup_steps = 100
+    training_args.warmup_ratio = 0.0
     training_args.weight_decay = 0.01
     training_args.eval_strategy = "steps"
     training_args.eval_steps = 100
@@ -145,8 +160,6 @@ def main():
         training_args.metric_for_best_model = "auroc"
         training_args.greater_is_better = True
         training_args.load_best_model_at_end = True
-        
-    model_args.attention_mode = "1d"
 
     set_seed(training_args.seed)
 
@@ -171,14 +184,7 @@ def main():
     rank0_print(f"Loading VAL task '{data_args.task_name}' from {val_sample_info_path}...")
 
     # 2. Load Embedding Cache
-    try:
-        embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
-    except Exception as e:
-        rank0_print(f"Warning: Could not load embedding cache from {data_args.embedding_cache}. Error: {e}")
-        text_dim = None
-
-    default_config = TableEncoderConfig()
-    model_text_dim = default_config.text_dim if text_dim is None else text_dim
+    _, text_dim = load_embedding_cache(data_args.embedding_cache)
 
     # 3. Load Type Vocab
     with open(data_args.type_vocab_file, 'r') as f:
@@ -209,9 +215,8 @@ def main():
     rank0_print(f"Val dataset size: {len(val_dataset)}")
 
     # 5. Model Config — binary classification with BCEWithLogitsLoss
-    encoder_config = TableEncoderConfig(
-        text_dim=model_text_dim,
-        attention_mode=model_args.attention_mode,
+    encoder_config = LongTableEncoder1DConfig(
+        text_dim=text_dim,
         type_vocab_size=len(type_vocab),
         num_classes=1,                       # Single binary output
         problem_type="single_label_classification"  # triggers BCEWithLogitsLoss via num_classes=1
@@ -239,7 +244,7 @@ def main():
         rank0_print("LoRA applied successfully.")
 
     # 8. Collate function
-    collate_fn = create_collate_fn(type_vocab, label_map=LABEL_MAP)
+    collate_fn = create_collate_fn(type_vocab, label_map=LABEL_MAP, max_table_len=data_args.max_table_len)
 
     # 9. Trainer
     callbacks = []

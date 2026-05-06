@@ -1,11 +1,12 @@
 import os
 import sys
-import pandas as pd
+import logging
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Optional
 import json
 from peft import LoraConfig, get_peft_model
 from transformers import Trainer, TrainingArguments, HfArgumentParser, set_seed, EarlyStoppingCallback
+from transformers.utils import logging as hf_logging
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,18 +17,27 @@ def rank0_print(*args, **kwargs):
     if local_rank in [-1, 0]:
         print(*args, **kwargs)
 
+
+def quiet_non_main_process_logs():
+    local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+    if local_rank not in [-1, 0]:
+        hf_logging.set_verbosity_error()
+        logging.getLogger("transformers").setLevel(logging.ERROR)
+        logging.getLogger("accelerate").setLevel(logging.ERROR)
+        logging.getLogger("deepspeed").setLevel(logging.ERROR)
+
 from dataset.ehrshot.ehrshot_dataset import EHRSHOTDataset
 from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import TableEncoderConfig
-from utils.load_embedding import load_embedding_cache, get_embedding
+from models.TableEncoder.config import LongTableEncoder1DConfig
+from utils.load_embedding import load_embedding_cache
 from utils.metrics import compute_classification_metrics
 from utils.samplers import TrainerWithBatchSampler, build_train_batch_sampler
 from utils.weight_loader import load_model_weights
 from utils.collate import create_collate_fn
 
+
 @dataclass
 class ModelArguments:
-    attention_mode: str = field(default='1d', metadata={"help": "Attention mode: '1d', '2d_grid', or 'hierarchical'"})
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to pre-trained model checkpoint (safetensors or bin)"})
     # LoRA options
     use_lora: bool = field(default=False, metadata={"help": "Apply LoRA adapters to encoder linear layers via peft"})
@@ -41,15 +51,16 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
-    data_dir: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/EHRSHOT", metadata={"help": "Root directory for EHRSHOT data"})
-    train_info_path: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/EHRSHOT/index/ehrshot_train.csv", metadata={"help": "Path to split csv"})
-    val_info_path: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/EHRSHOT/index/ehrshot_val.csv", metadata={"help": "Path to validation split csv"})
-    embedding_cache: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/.cache/embeddings/ehrshot/text_embeddings.pt", 
+    max_table_len: int = field(metadata={"help": "Keep only the most recent N table rows before encoding"})
+    data_dir: str = field(default="/data/EHR_data_public/EHRSHOT", metadata={"help": "Root directory for EHRSHOT data"})
+    train_info_path: str = field(default="/data/EHR_data_public/EHRSHOT/index/ehrshot_train.csv", metadata={"help": "Path to split csv"})
+    val_info_path: str = field(default="/data/EHR_data_public/EHRSHOT/index/ehrshot_val.csv", metadata={"help": "Path to validation split csv"})
+    embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings.pt", 
                                   metadata={"help": "Path to pre-computed embedding cache"})
     max_train_samples: Optional[int] = field(default=None, metadata={"help": "Limit training samples"})
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
     task_name: str = field(default="lab_anemia", metadata={"help": "Comma-separated task names or 'all'"})
-    type_vocab_file: str = field(default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/data/type_vocab.json", metadata={"help": "Path to type vocabulary JSON file"})
+    type_vocab_file: str = field(default="/data/zikun_workspace/code/data/type_vocab.json", metadata={"help": "Path to type vocabulary JSON file"})
     max_tokens_per_batch: Optional[int] = field(default=None, metadata={"help": "Enable ApproxBatchSampler when >0. This caps padded tokens per batch."})
     use_sortish_sampler: bool = field(default=True, metadata={"help": "Whether to use SortishSampler before ApproxBatchSampler packing."})
     sortish_chunk_factor: int = field(default=50, metadata={"help": "Sortish chunk factor. Larger means more sorting, less randomness."})
@@ -58,13 +69,17 @@ class DataArguments:
 @dataclass
 class CustomTrainingArguments(TrainingArguments):
     wandb_project: Optional[str] = field(default="EHRSHOT", metadata={"help": "W&B project name. Overrides WANDB_PROJECT environment variable."})
-    early_stopping_patience: int = field(default=5, metadata={"help": "Number of eval steps with no improvement before stopping. Set to 0 to disable."})
+    early_stopping_patience: int = field(default=10, metadata={"help": "Number of eval steps with no improvement before stopping. Set to 0 to disable."})
 
 def main():
     parser = HfArgumentParser((ModelArguments, DataArguments, CustomTrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    quiet_non_main_process_logs()
     
-    training_args.warmup_ratio = 0.1
+    training_args.lr_scheduler_type = "cosine"
+    if training_args.warmup_steps == 0:
+        training_args.warmup_steps = 100
+    training_args.warmup_ratio = 0.0
     training_args.weight_decay = 0.01
     training_args.seed = 42
     training_args.eval_strategy = "steps"
@@ -72,28 +87,21 @@ def main():
     training_args.logging_strategy = "steps"
     training_args.logging_steps = 10
     training_args.save_strategy = "steps"
-    training_args.save_steps = 500
-    training_args.save_total_limit = 2
+    training_args.save_steps = 50
+    training_args.save_total_limit = 1
     training_args.bf16 = True
     training_args.dataloader_num_workers = 16
     training_args.remove_unused_columns = False
     training_args.report_to = ["wandb"]
-        
-    model_args.attention_mode = "1d"
-
-    # Enforce safetensors saving and best model logic
     training_args.save_safetensors = True
-    
+
     set_seed(training_args.seed)
 
     if training_args.wandb_project:
         os.environ["WANDB_PROJECT"] = training_args.wandb_project
     
     # 1. Load Embedding Cache
-    embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
-    
-    default_config = TableEncoderConfig()
-    model_text_dim = default_config.text_dim if text_dim is None else text_dim
+    _, text_dim = load_embedding_cache(data_args.embedding_cache)
     
     task_name = data_args.task_name.strip()
     is_multiclass_task = task_name.startswith("lab_")
@@ -141,9 +149,8 @@ def main():
         training_args.run_name = base_run_name
     os.makedirs(task_output_dir, exist_ok=True)
 
-    encoder_config = TableEncoderConfig(
-        text_dim=model_text_dim,
-        attention_mode=model_args.attention_mode,
+    encoder_config = LongTableEncoder1DConfig(
+        text_dim=text_dim,
         type_vocab_size=len(type_vocab),
         num_classes=4 if is_multiclass_task else 1,
         problem_type="single_label_classification"
@@ -151,7 +158,7 @@ def main():
 
     model = LongTableEncoderClassifier(config=encoder_config)
     
-    collate_fn = create_collate_fn(type_vocab)
+    collate_fn = create_collate_fn(type_vocab, max_table_len=data_args.max_table_len)
     
     callbacks = []
     if training_args.early_stopping_patience > 0 and training_args.eval_strategy != "no":

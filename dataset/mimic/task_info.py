@@ -404,6 +404,15 @@ TASK_INFO = {
         "instruction": None,
     },
 
+    "next_token_prediction": {
+        "target_key": None,
+        "event": "discharge",
+        "metric": None,
+        "bid_event": ["discharge", "radiology"],
+        "task_type": "pretraining",
+        "instruction": None,
+    },
+
     "bi_reconstruct": {
         "target_key": None,
         "metric": None,

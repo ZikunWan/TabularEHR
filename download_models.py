@@ -9,7 +9,7 @@ HF_HOME = "/data/zikun_workspace/.cache"
 MODEL_ROOT = "/data/model_weights_public"
 
 MODEL_IDS = [
-    "emilyalsentzer/Bio_ClinicalBERT"
+    "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext"
 ]
 
 

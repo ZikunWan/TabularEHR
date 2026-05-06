@@ -1,13 +1,10 @@
 import os
 import sys
-import torch
-import torch.nn as nn
 import pandas as pd
 import json
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
-from tqdm import tqdm
+from typing import Optional
 from sklearn.metrics import roc_auc_score
 from transformers import HfArgumentParser, set_seed, Trainer, TrainingArguments
 
@@ -17,14 +14,13 @@ sys.path.append(project_root)
 
 from dataset.renji_dataset import RenjiDataset
 from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import TableEncoderConfig
+from models.TableEncoder.config import LongTableEncoderMemoryConfig
 from utils.weight_loader import load_model_weights
-from utils.load_embedding import load_embedding_cache, get_embedding
+from utils.load_embedding import load_embedding_cache
 from utils.collate import create_collate_fn
 
 @dataclass
 class ModelArguments:
-    attention_mode: str = field(default='1d', metadata={"help": "Attention mode used at training time: '1d', '2d_grid', or 'hierarchical'"})
     use_lora: bool = field(default=False, metadata={"help": "Set True if the checkpoint was saved with LoRA (PEFT) and adapter_config.json is absent/needs override"})
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to base transformer weights (e.g., google/tapas-base) if the model requires them before loading the classifier head/adapter."})
 
@@ -35,6 +31,7 @@ class DataArguments:
     embedding_cache: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/.cache/embeddings/renji/text_embeddings.pt")
     checkpoint_dir: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/renji_classifier", metadata={"help": "Path to the checkpoint directory"})
     batch_size: int = field(default=64, metadata={"help": "Evaluation batch size"})
+    max_table_len: Optional[int] = field(default=None, metadata={"help": "Keep only the most recent N table rows before encoding"})
     split: str = field(default="test", metadata={"help": "Dataset split to evaluate on (test/val/train)"})
     seed: int = field(default=42)
     type_vocab_file: str = field(default="data/type_vocab.json")
@@ -44,7 +41,7 @@ def main():
     model_args, data_args = parser.parse_args_into_dataclasses()
     
     set_seed(data_args.seed)
-    embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
+    _, text_dim = load_embedding_cache(data_args.embedding_cache)
     
     test_dataset = RenjiDataset(
         root_dir=data_args.data_dir, split=data_args.split, table_mode="table_only", shuffle=False,
@@ -56,9 +53,8 @@ def main():
     with open(vocab_path, 'r') as f:
         type_vocab = json.load(f)
 
-    encoder_config = TableEncoderConfig(
+    encoder_config = LongTableEncoderMemoryConfig(
         text_dim=text_dim,
-        attention_mode=model_args.attention_mode,
         type_vocab_size=len(type_vocab),
         num_points=len(RenjiDataset.ALL_POINTS),
         num_metrics=len(RenjiDataset.ALL_METRICS),
@@ -88,7 +84,7 @@ def main():
     trainer = Trainer(
         model=model,
         args=training_args,
-        data_collator=create_collate_fn(type_vocab),
+        data_collator=create_collate_fn(type_vocab, max_table_len=data_args.max_table_len),
     )
     
     print("Starting evaluation...")

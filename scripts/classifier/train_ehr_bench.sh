@@ -41,10 +41,13 @@ for TASK in "${TASKS[@]}"; do
         --pretrained_path "/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/contrastive_learning" \
         --train_sample_info_path "$TRAIN_INFO_PATH" \
         --val_sample_info_path "$VAL_INFO_PATH" \
+        --max_table_len 4096 \
         --per_device_train_batch_size 16 \
         --per_device_eval_batch_size 32 \
         --num_train_epochs $EPOCHS \
         --learning_rate 1e-5 \
+        --lr_scheduler_type "cosine" \
+        --warmup_steps 100 \
         --early_stopping_patience 5 \
         --eval_strategy "steps" \
         --eval_steps 100 \

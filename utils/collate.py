@@ -1,8 +1,7 @@
 import torch
 from typing import List, Dict, Any, Optional
 import pandas as pd
-from .load_embedding import get_embedding
-
+from .load_embedding import get_embedding, get_pad_embedding
 
 
 def build_table_token_tensors(
@@ -12,10 +11,37 @@ def build_table_token_tensors(
     row_block_ids_list: Optional[List[List[Any]]] = None,
     kept_block_ids_list: Optional[List[List[Any]]] = None,
     type_vocab: Optional[Dict[str, int]] = None,
-) -> Dict[str, torch.Tensor]:
+    ) -> Dict[str, torch.Tensor]:
     """
     Build table token tensors for TableEncoder from a list of measurement tables.
-    Returns tensors: item_ids/unit_ids/value_text_ids/times/numeric_values/numeric_mask/seq_mask/type_ids.
+
+    Args:
+        tables_list: List of per-sample measurement tables. Each non-empty table
+            is expected to be a pandas DataFrame with Item, Value, Unit, and
+            Category columns, and optionally a Time column.
+        text_to_idx: Mapping from cached table text strings to token ids.
+        pad_idx: Token id used when a text cell is missing or absent from
+            text_to_idx, and for padded positions.
+        row_block_ids_list: Optional per-sample row block ids aligned with table
+            rows. Used only when filtering rows by kept_block_ids_list.
+        kept_block_ids_list: Optional per-sample block ids to keep. When present
+            with matching row_block_ids_list, rows outside these blocks are
+            dropped before tensorization.
+        type_vocab: Optional mapping from Category strings to type ids.
+
+    Returns:
+        A dict of padded tensors with shape [batch_size, max_table_len]:
+            item_ids: token ids for Item strings.
+            unit_ids: token ids for Unit strings, or pad_idx for missing cells.
+            value_text_ids: token ids for non-numeric Value strings, or pad_idx
+                for numeric/missing values.
+            times: relative hours from the first valid row time, starting at 1;
+                0 marks missing or padded times.
+            numeric_values: parsed numeric Value values; 0 for non-numeric,
+                missing, or padded values.
+            numeric_mask: 1 where Value is numeric, otherwise 0.
+            seq_mask: 1 for real table rows, 0 for padding or empty tables.
+            type_ids: Category ids.
     """
     if row_block_ids_list is None:
         row_block_ids_list = [None] * len(tables_list)
@@ -42,22 +68,27 @@ def build_table_token_tensors(
             sl = len(t)
             seq_lens.append(sl)
 
-            item_series = t["Item"].astype(str)
-            item_ids = item_series.map(text_to_idx).fillna(pad_idx).astype(int).tolist()
+            item_ids = [
+                text_to_idx.get(str(item), pad_idx) if pd.notna(item) else pad_idx
+                for item in t["Item"]
+            ]
 
-            if "Unit" in t.columns and not t["Unit"].isnull().all():
-                unit_series = t["Unit"].astype(str).fillna("-")
-                unit_ids = unit_series.map(text_to_idx).fillna(pad_idx).astype(int).tolist()
-            else:
-                unit_ids = [text_to_idx.get("-", pad_idx)] * sl
+            unit_ids = [
+                text_to_idx.get(str(unit), pad_idx) if pd.notna(unit) else pad_idx
+                for unit in t["Unit"]
+            ]
 
-            val_series = t["Value"].astype(str)
+            val_series = t["Value"]
             numeric_series = pd.to_numeric(val_series, errors="coerce")
             is_numeric = numeric_series.notna()
             num_mask = is_numeric.astype(float).tolist()
             num_vals = numeric_series.fillna(0.0).tolist()
-            text_lookup_series = val_series.where(~is_numeric, "0")
-            value_text_ids_list = text_lookup_series.map(text_to_idx).fillna(pad_idx).astype(int).tolist()
+            value_text_ids_list = [
+                text_to_idx.get(str(value), pad_idx)
+                if (not is_num and pd.notna(value))
+                else pad_idx
+                for value, is_num in zip(val_series, is_numeric)
+            ]
 
             all_item_ids.append(item_ids)
             all_unit_ids.append(unit_ids)
@@ -80,25 +111,20 @@ def build_table_token_tensors(
                 delta_hours = [0.0] * sl
             all_times.append(delta_hours)
 
-            if "Type" in t.columns:
-                type_ids = t["Type"].map(type_vocab).fillna(0).astype(int).tolist()
-            elif "Category" in t.columns:
-                type_ids = [type_vocab.get(str(c), 0) for c in t["Category"]]
-            else:
-                type_ids = [0] * sl
+            type_ids = [type_vocab.get(str(c), 0) for c in t["Category"]]
             all_type_ids.append(type_ids)
         else:
-            seq_lens.append(1)
-            all_item_ids.append([text_to_idx.get("[EMPTY]", pad_idx)])
-            all_unit_ids.append([text_to_idx.get("-", pad_idx)])
-            all_value_text_ids.append([text_to_idx.get("0", pad_idx)])
-            all_times.append([0.0])
-            all_numeric_values.append([0.0])
-            all_numeric_masks.append([0.0])
-            all_type_ids.append([0])
+            seq_lens.append(0)
+            all_item_ids.append([])
+            all_unit_ids.append([])
+            all_value_text_ids.append([])
+            all_times.append([])
+            all_numeric_values.append([])
+            all_numeric_masks.append([])
+            all_type_ids.append([])
 
     bs = len(tables_list)
-    max_len = max(seq_lens)
+    max_len = max(max(seq_lens), 1)
 
     item_ids_t = torch.zeros(bs, max_len, dtype=torch.long)
     unit_ids_t = torch.zeros(bs, max_len, dtype=torch.long)
@@ -132,19 +158,36 @@ def build_table_token_tensors(
     }
 
 
-def create_collate_fn(type_vocab=None, label_map=None):
+def create_collate_fn(type_vocab=None, label_map=None, max_table_len: Optional[int] = None):
     """
     Requires dataset __getitem__ to return a dictionary with:
     - `label`: An integer, float, or tensor representing the classification target.
-    - `measurement_table`: (Optional) A pandas DataFrame containing columns ['Time', 'Item', 'Value', 'Unit', 'Category'].
+    - `measurement_table`: A pandas DataFrame containing columns ['Item', 'Value', 'Unit', 'Category'] and optional column ['Time'].
     """
     if type_vocab is None: type_vocab = {}
+
+    def lookup_or_pad(value, pad_emb):
+        if pd.isna(value):
+            return pad_emb
+        text = str(value)
+        if not text.strip():
+            return pad_emb
+        emb = get_embedding(text)
+        return emb if emb is not None else pad_emb
     
     def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+        batch = [
+            sample for sample in batch
+            if sample.get("measurement_table") is not None and not sample["measurement_table"].empty
+        ]
+        if len(batch) == 0:
+            raise ValueError("All samples in this batch have empty measurement_table.")
+
         bs = len(batch)
         all_item_embs, all_unit_embs, all_value_embs = [], [], []
         all_times, all_num_vals, all_num_masks, all_type_ids = [], [], [], []
         labels_list, seq_lens = [], []
+        pad_emb = get_pad_embedding()
         
         for sample in batch:
             # 1. Parse Label
@@ -169,42 +212,43 @@ def create_collate_fn(type_vocab=None, label_map=None):
             
             # 2. Parse Table
             df = sample.get('measurement_table')
-            if df is not None and not df.empty:
-                items = df['Item'].astype(str).tolist()
-                units = df['Unit'].astype(str).fillna('-').tolist() if 'Unit' in df.columns else ['-'] * len(df)
-                
-                num_series = pd.to_numeric(df['Value'], errors="coerce")
-                num_mask = num_series.notna().astype(float).tolist()
-                num_vals = num_series.fillna(0.0).tolist()
-                
-                value_embs = [get_embedding("0") if m else get_embedding(str(v)) for v, m in zip(df['Value'], num_mask)]
-                
-                # Assume dataset already converted time to relative days float. E.g. 0.0 for MIMIC
-                time_vals = pd.to_numeric(df['Time'], errors="coerce").fillna(0.0).tolist() if 'Time' in df.columns else [0.0] * len(items)
-                
-                type_ids = [type_vocab.get(str(c), 0) for c in df["Category"]] if "Category" in df.columns else [0] * len(items)
-                
-                seq_lens.append(len(items))
-                all_item_embs.append(torch.stack([get_embedding(x) for x in items]))
-                all_unit_embs.append(torch.stack([get_embedding(x) for x in units]))
-                all_value_embs.append(torch.stack(value_embs))
-                all_times.append(time_vals)
-                all_num_vals.append(num_vals)
-                all_num_masks.append(num_mask)
-                all_type_ids.append(type_ids)
-            else:
-                seq_lens.append(1)
-                all_item_embs.append(get_embedding('[EMPTY]').unsqueeze(0))
-                all_unit_embs.append(get_embedding('-').unsqueeze(0))
-                all_value_embs.append(get_embedding('0').unsqueeze(0))
-                all_times.append([0.0])
-                all_num_vals.append([0.0])
-                all_num_masks.append([1.0])
-                all_type_ids.append([0])
+            if max_table_len is not None:
+                df = df.tail(max_table_len).reset_index(drop=True)
+
+            item_embs = [
+                lookup_or_pad(item, pad_emb)
+                for item in df['Item']
+            ]
+            unit_embs = [
+                lookup_or_pad(unit, pad_emb)
+                for unit in df['Unit']
+            ]
+
+            num_series = pd.to_numeric(df['Value'], errors="coerce")
+            num_mask = num_series.notna().astype(float).tolist()
+            num_vals = num_series.fillna(0.0).tolist()
+
+            value_embs = [
+                pad_emb if m else lookup_or_pad(v, pad_emb)
+                for v, m in zip(df['Value'], num_mask)
+            ]
+
+            # Assume dataset already converted time to relative days float. E.g. 0.0 for MIMIC
+            time_vals = pd.to_numeric(df['Time'], errors="coerce").fillna(0.0).tolist() if 'Time' in df.columns else [0.0] * len(item_embs)
+
+            type_ids = [type_vocab.get(str(c), 0) for c in df["Category"]]
+
+            seq_lens.append(len(item_embs))
+            all_item_embs.append(torch.stack(item_embs))
+            all_unit_embs.append(torch.stack(unit_embs))
+            all_value_embs.append(torch.stack(value_embs))
+            all_times.append(time_vals)
+            all_num_vals.append(num_vals)
+            all_num_masks.append(num_mask)
+            all_type_ids.append(type_ids)
         
         # 3. Padding tensors to max length
         max_len = max(seq_lens)
-        pad_emb = get_embedding('[PAD]')
         for i in range(bs):
             p = max_len - seq_lens[i]
             if p > 0:

@@ -459,7 +459,7 @@ TABULAR_KEYS = [
 ]
 NOTE_EVENT_KEYS = {"discharge", "radiology"}
 
-PRETRAINING_CONTRASTIVE_TASKS = {"contrastive_learning"}
+PRETRAINING_CONTRASTIVE_TASKS = {"contrastive_learning", "next_token_prediction"}
 PRETRAINING_BI_RECONSTRUCTION_TASKS = {"bi_reconstruct"}
 PRETRAINING_TASK_TYPE = {
     **{task: "contrastive_learning" for task in PRETRAINING_CONTRASTIVE_TASKS},
@@ -835,7 +835,7 @@ def parse_args():
     
 def get_sample_weight(sample, task_target_info):
     # Pretraining tasks don't need reweighting
-    if sample["task"] in ["contrastive_learning", "bi_reconstruct"]:
+    if sample["task"] in ["contrastive_learning", "next_token_prediction", "bi_reconstruct"]:
         return 1.0
     
     if isinstance(sample["target"], list):

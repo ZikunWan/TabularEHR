@@ -20,7 +20,7 @@ class FlashAttention(nn.Module):
         self._attn_gradients = None
         self.attn_drop_prob = attn_drop
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, causal: bool = False):
         """
         :param x: Shape (batch_size, seq_len, hidden_dim)
         :param mask: 0 = ignored, 1 = attention enabled
@@ -49,6 +49,11 @@ class FlashAttention(nn.Module):
             # SDPA accepts bool masks and can still select Flash / mem_efficient backends,
             # whereas a float additive mask (with -inf) forces the O(N²) Math backend.
             attn_mask = attn_mask.bool()
+
+        if causal:
+            causal_mask = torch.ones(seq_len, seq_len, device=x.device, dtype=torch.bool).tril()
+            causal_mask = causal_mask.view(1, 1, seq_len, seq_len)
+            attn_mask = causal_mask if attn_mask is None else attn_mask & causal_mask
 
         # Flash Attention has a known backward bug for seq_len < 64 (e.g. intra-component
         # attention where seq_len == num_components == 4).  Use mem_efficient backend which:
@@ -132,8 +137,8 @@ class StandardTransformerLayer(nn.Module):
         self.norm2 = RMSNorm(dim)
         self.ffn = FeedForward(dim, mlp_dim, dropout)
 
-    def forward(self, x, mask=None):
-        x = x + self.attn(self.norm1(x.to(self.norm1.weight.dtype)), mask)
+    def forward(self, x, mask=None, causal: bool = False):
+        x = x + self.attn(self.norm1(x.to(self.norm1.weight.dtype)), mask, causal=causal)
         x = x + self.ffn(self.norm2(x.to(self.norm2.weight.dtype)))
         return x
 
@@ -157,7 +162,7 @@ class ComponentTransformerLayer(nn.Module):
         self.norm2 = RMSNorm(dim)
         self.ffn = FeedForward(dim, mlp_dim, dropout)
 
-    def forward(self, x, seq_mask=None):
+    def forward(self, x, seq_mask=None, causal: bool = False):
         """
         x: [batch_size, seq_len, num_components, embed_dim]
         seq_mask: [batch_size, seq_len] (1 for valid, 0 for padding)
@@ -192,7 +197,7 @@ class ComponentTransformerLayer(nn.Module):
             
         # Apply inter attention
         norm_inter = self.norm1_inter(x_inter.to(self.norm1_inter.weight.dtype))
-        out_inter = self.inter_attn(norm_inter, mask=r_mask)
+        out_inter = self.inter_attn(norm_inter, mask=r_mask, causal=causal)
         x_inter = x_inter + out_inter
         
         # Transpose back: [batch_size, num_components, seq_len, embed_dim] -> [batch_size, seq_len, num_components, embed_dim]
@@ -228,7 +233,7 @@ class HierarchicalTransformerLayer(nn.Module):
         self.norm2 = RMSNorm(dim)
         self.ffn = FeedForward(dim, mlp_dim, dropout)
 
-    def forward(self, x_full, full_group_ids, full_seq_mask, inter_mask, max_T):
+    def forward(self, x_full, full_group_ids, full_seq_mask, inter_mask, max_T, causal: bool = False):
         """
         x_full:         [B, max_T + N, D]  — CLS tokens first, then sequence tokens
         full_group_ids: [B, max_T + N]     — int64; CLS_t has group_id=t, token_i has its time-step index
@@ -249,7 +254,7 @@ class HierarchicalTransformerLayer(nn.Module):
         # === 2. Inter-time Attention (CLS tokens only) ===
         cls_tokens = x_full[:, :max_T, :]                                           # [B, max_T, D]
         norm_cls   = self.norm1_inter(cls_tokens.to(self.norm1_inter.weight.dtype))
-        cls_delta  = self.inter_attn(norm_cls, mask=inter_mask)                     # inter_mask: [B, max_T]
+        cls_delta  = self.inter_attn(norm_cls, mask=inter_mask, causal=causal)      # inter_mask: [B, max_T]
 
         # Write updated CLS back and keep the rest of the sequence unchanged
         x_full = torch.cat([cls_tokens + cls_delta, x_full[:, max_T:, :]], dim=1)

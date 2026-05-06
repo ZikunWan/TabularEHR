@@ -111,7 +111,7 @@ def main():
         
         tokens = tokenizer(
             batch_texts,
-            padding='max_length',
+            padding=True,
             truncation=True,
             max_length=MAX_TOKEN_LEN,
             return_tensors='pt'
