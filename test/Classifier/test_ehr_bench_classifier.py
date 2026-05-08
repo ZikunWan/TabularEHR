@@ -14,11 +14,19 @@ sys.path.append(project_root)
 
 
 from dataset.mimic.mimic_dataset import MIMICIV
-from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import LongTableEncoderMemoryConfig
+from dataset.mimic.task_info import get_task_info
+from models.TableEncoder.config import LongTableEncoder1DConfig
+from models.TableEncoder.query_classifier import TaskQueryClassificationModel
 
-from utils.collate import create_collate_fn
-from utils.load_embedding import load_embedding_cache
+from utils.collate import create_query_collate_fn
+from utils.load_embedding import (
+    build_embedding_matrix,
+    build_text_to_idx,
+    build_vocab_keys,
+    get_special_token_indices,
+    load_embedding_cache,
+)
+from utils.query_embedding import build_query_embeddings
 from utils.weight_loader import load_model_weights
 
 LABEL_MAP = {"yes": 1, "no": 0}
@@ -54,6 +62,10 @@ class DataArguments:
         default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/data/type_vocab.json",
         metadata={"help": "Path to type vocabulary JSON file"}
     )
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt")
+    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
+    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
+    query_max_length: int = field(default=128)
     seed: int = field(default=42, metadata={"help": "Random seed"})
     lazy_mode: bool = field(default=True, metadata={"help": "Load samples lazily from parquet to save memory"})
 
@@ -84,7 +96,11 @@ def main():
     print(f"Loading task '{data_args.task_name}' from {sample_info_path}...")
     
     # 2. Load Embedding Cache
-    _, text_dim = load_embedding_cache(data_args.embedding_cache)
+    embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
+    vocab_keys = build_vocab_keys(embedding_cache)
+    text_to_idx = build_text_to_idx(vocab_keys)
+    embedding_matrix = build_embedding_matrix(embedding_cache, vocab_keys)
+    pad_idx = get_special_token_indices(text_to_idx)["pad_idx"]
 
     # 3. Load Type Vocab
     with open(data_args.type_vocab_file, 'r') as f:
@@ -102,14 +118,29 @@ def main():
     print(f"Test dataset size: {len(test_dataset)}")
 
     # 5. Model Config — binary classification
-    encoder_config = LongTableEncoderMemoryConfig(
+    encoder_config = LongTableEncoder1DConfig(
         text_dim=text_dim,
         type_vocab_size=len(type_vocab),
+        max_table_len=data_args.max_table_len,
         num_classes=1,                       
         problem_type="single_label_classification"
     )
 
-    model = LongTableEncoderClassifier(config=encoder_config)
+    task_info = get_task_info()[data_args.task_name]
+    query_key = f"ehr_bench:{data_args.task_name}"
+    query_embeddings, query_dim = build_query_embeddings(
+        {query_key: task_info["instruction"]},
+        data_args.query_embedding_cache,
+        data_args.query_text_encoder_path,
+        data_args.query_text_encoder_base_model,
+        data_args.query_max_length,
+    )
+
+    model = TaskQueryClassificationModel(
+        config=encoder_config,
+        embedding_matrix=embedding_matrix,
+        query_dim=query_dim,
+    )
 
     # 6. Load weights — auto-detect LoRA vs plain checkpoint
     if model_args.pretrained_path:
@@ -131,7 +162,14 @@ def main():
     )
     
     # 7. Collate function mapped identical to training script
-    collate_fn = create_collate_fn(type_vocab, label_map=LABEL_MAP, max_table_len=data_args.max_table_len)
+    collate_fn = create_query_collate_fn(
+        type_vocab,
+        label_map=LABEL_MAP,
+        max_table_len=data_args.max_table_len,
+        text_to_idx=text_to_idx,
+        pad_idx=pad_idx,
+        query_embed=query_embeddings[query_key],
+    )
 
     trainer = Trainer(
         model=model,

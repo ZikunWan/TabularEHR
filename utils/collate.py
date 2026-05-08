@@ -278,3 +278,68 @@ def create_collate_fn(type_vocab=None, label_map=None, max_table_len: Optional[i
             "labels": labels_tensor
         }
     return collate_fn
+
+
+def create_query_collate_fn(
+    type_vocab=None,
+    label_map=None,
+    max_table_len: Optional[int] = None,
+    text_to_idx: Optional[Dict[str, int]] = None,
+    pad_idx: int = 0,
+    query_embed: Optional[torch.Tensor] = None,
+    query_embeddings_by_text: Optional[Dict[str, torch.Tensor]] = None,
+):
+    if type_vocab is None:
+        type_vocab = {}
+
+    def parse_label(raw_label):
+        if isinstance(raw_label, torch.Tensor):
+            return raw_label
+        if isinstance(raw_label, str):
+            norm_label = raw_label.strip().strip('"').strip("'").strip()
+            norm_label_lower = norm_label.lower()
+            if norm_label_lower == "yes":
+                return 1
+            if norm_label_lower == "no":
+                return 0
+            if label_map is not None and norm_label in label_map:
+                return label_map[norm_label]
+            if label_map is not None and norm_label_lower in label_map:
+                return label_map[norm_label_lower]
+            return int(float(norm_label))
+        return int(raw_label)
+
+    def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+        batch = [
+            sample for sample in batch
+            if sample.get("measurement_table") is not None and not sample["measurement_table"].empty
+        ]
+        if len(batch) == 0:
+            raise ValueError("All samples in this batch have empty measurement_table.")
+
+        tables = []
+        labels = []
+        query_embeds = []
+        for sample in batch:
+            df = sample["measurement_table"]
+            if max_table_len is not None:
+                df = df.tail(max_table_len).reset_index(drop=True)
+            tables.append(df)
+            labels.append(parse_label(sample["output"]))
+
+            if query_embeddings_by_text is not None:
+                query_embeds.append(query_embeddings_by_text[str(sample["instruction"])])
+            else:
+                query_embeds.append(query_embed)
+
+        tensors = build_table_token_tensors(
+            tables,
+            text_to_idx=text_to_idx,
+            pad_idx=pad_idx,
+            type_vocab=type_vocab,
+        )
+        tensors["query_embeds"] = torch.stack(query_embeds)
+        tensors["labels"] = torch.stack(labels) if isinstance(labels[0], torch.Tensor) else torch.tensor(labels)
+        return tensors
+
+    return collate_fn

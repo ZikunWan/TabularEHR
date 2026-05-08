@@ -23,6 +23,18 @@ from utils.load_embedding import (
 )
 
 
+LOSS_COMPONENT_NAMES = (
+    "category_loss",
+    "item_loss",
+    "unit_loss",
+    "value_loss",
+    "weighted_category_loss",
+    "weighted_item_loss",
+    "weighted_unit_loss",
+    "weighted_value_loss",
+)
+
+
 def rank0_print(*args, **kwargs):
     local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
     if local_rank in [-1, 0]:
@@ -33,20 +45,21 @@ def rank0_print(*args, **kwargs):
 class DataArguments:
     root_dir: str = field(default="/data/zikun_workspace/mimic-iv-3.1_tabular")
     train_info_path: str = field(
-        default="/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/all/contrastive_learning_test.csv"
+        default="/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv"
     )
     table_text_embedding: str = field(
-        default="/data/zikun_workspace/mimic-iv-3.1_tabular/embeddings/table_text_embeddings.pt"
+        default="/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt"
     )
     type_vocab_file: str = field(default="/data/zikun_workspace/code/data/type_vocab.json")
     max_train_samples: Optional[int] = field(default=None)
+    max_table_len: Optional[int] = field(default=32768)
     min_table_rows: int = field(default=2)
 
 
 @dataclass
 class NextTokenTrainingArguments(TrainingArguments):
     output_dir: str = field(default="/data/zikun_workspace/checkpoints/pretraining/next_token_prediction")
-    num_train_epochs: float = field(default=10)
+    num_train_epochs: float = field(default=1)
     per_device_train_batch_size: int = field(default=8)
     learning_rate: float = field(default=1e-4)
     warmup_steps: int = field(default=100)
@@ -133,6 +146,33 @@ def build_dataset(root_dir: str, sample_info_path: str, max_samples: Optional[in
     return dataset
 
 
+class NextTokenPredictionTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        outputs = model(**inputs)
+        loss = outputs.loss
+
+        if not hasattr(self, "_loss_component_sums"):
+            self._loss_component_sums = {name: 0.0 for name in LOSS_COMPONENT_NAMES}
+            self._loss_component_count = 0
+
+        for name in LOSS_COMPONENT_NAMES:
+            value = getattr(outputs, name, None)
+            if value is not None:
+                self._loss_component_sums[name] += value.detach().float().item()
+        self._loss_component_count += 1
+
+        return (loss, outputs) if return_outputs else loss
+
+    def log(self, logs, start_time=None):
+        if hasattr(self, "_loss_component_sums") and self._loss_component_count > 0:
+            logs = dict(logs)
+            for name, value in self._loss_component_sums.items():
+                logs[name] = value / self._loss_component_count
+            self._loss_component_sums = {name: 0.0 for name in LOSS_COMPONENT_NAMES}
+            self._loss_component_count = 0
+        super().log(logs, start_time=start_time)
+
+
 def main():
     parser = HfArgumentParser((DataArguments, NextTokenTrainingArguments))
     data_args, training_args = parser.parse_args_into_dataclasses()
@@ -150,7 +190,11 @@ def main():
     type_vocab = load_type_vocab(data_args.type_vocab_file)
     type_vocab_size = max(type_vocab.values()) + 1
 
-    config = LongTableEncoder1DConfig(text_dim=text_dim, type_vocab_size=type_vocab_size)
+    config = LongTableEncoder1DConfig(
+        text_dim=text_dim,
+        type_vocab_size=type_vocab_size,
+        max_table_len=data_args.max_table_len,
+    )
     model = NextTokenPredictionModel(
         config=config,
         embedding_matrix=embedding_matrix,
@@ -175,7 +219,7 @@ def main():
     rank0_print(f"Train samples: {len(train_dataset)}")
     rank0_print(f"Table vocab size: {len(vocab_keys)}, text_dim={text_dim}, type_vocab_size={type_vocab_size}")
 
-    trainer = Trainer(
+    trainer = NextTokenPredictionTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,

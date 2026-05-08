@@ -27,12 +27,20 @@ def quiet_non_main_process_logs():
         logging.getLogger("deepspeed").setLevel(logging.ERROR)
 
 from dataset.mimic_iv_cdm.mimic_iv_cdm_dataset import MIMICIVCDM
-from models.encoder_classifier import LongTableEncoderClassifier
+from dataset.mimic_iv_cdm.task_info import get_task_info
 from models.TableEncoder.config import LongTableEncoder1DConfig
-from utils.load_embedding import load_embedding_cache
+from models.TableEncoder.query_classifier import TaskQueryClassificationModel
+from utils.load_embedding import (
+    build_embedding_matrix,
+    build_text_to_idx,
+    build_vocab_keys,
+    get_special_token_indices,
+    load_embedding_cache,
+)
 from utils.samplers import TrainerWithBatchSampler, build_train_batch_sampler
 from utils.weight_loader import load_model_weights
-from utils.collate import create_collate_fn
+from utils.collate import create_query_collate_fn
+from utils.query_embedding import build_query_embeddings
 
 LABEL_MAP = {
     'appendicitis': 0,
@@ -46,7 +54,6 @@ NUM_CLASSES = len(LABEL_MAP)
 @dataclass
 class ModelArguments:
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to pre-trained model checkpoint (safetensors or bin)"})
-    dim_out: Optional[int] = field(default=None, metadata={"help": "Classifier/encoder output dimension. Use None to keep config.dim."})
     use_lora: bool = field(default=False, metadata={"help": "Apply LoRA adapters to encoder linear layers via peft"})
     lora_r: int = field(default=16, metadata={"help": "LoRA rank"})
     lora_alpha: int = field(default=32, metadata={"help": "LoRA alpha (scaling = alpha/r)"})
@@ -76,6 +83,10 @@ class DataArguments:
         default="/data/zikun_workspace/code/data/type_vocab.json",
         metadata={"help": "Path to type vocabulary JSON file"}
     )
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt")
+    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
+    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
+    query_max_length: int = field(default=128)
     max_tokens_per_batch: Optional[int] = field(default=None, metadata={"help": "Enable ApproxBatchSampler when >0. This caps padded tokens per batch."})
     use_sortish_sampler: bool = field(default=True, metadata={"help": "Whether to use SortishSampler before ApproxBatchSampler packing."})
     sortish_chunk_factor: int = field(default=50, metadata={"help": "Sortish chunk factor. Larger means more sorting, less randomness."})
@@ -113,7 +124,11 @@ def main():
         os.environ["WANDB_PROJECT"] = training_args.wandb_project
 
     # 1. Load Embedding Cache
-    _, text_dim = load_embedding_cache(data_args.embedding_cache)
+    embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
+    vocab_keys = build_vocab_keys(embedding_cache)
+    text_to_idx = build_text_to_idx(vocab_keys)
+    embedding_matrix = build_embedding_matrix(embedding_cache, vocab_keys)
+    pad_idx = get_special_token_indices(text_to_idx)["pad_idx"]
 
     # 2. Load Type Vocab
     type_vocab = None
@@ -137,12 +152,26 @@ def main():
     encoder_config = LongTableEncoder1DConfig(
         text_dim=text_dim,
         type_vocab_size=len(type_vocab),
-        dim_out=model_args.dim_out,
+        max_table_len=data_args.max_table_len,
         num_classes=NUM_CLASSES,
         problem_type="single_label_classification"
     )
 
-    model = LongTableEncoderClassifier(config=encoder_config)
+    task_info = get_task_info()[data_args.task_name]
+    query_key = f"mimic_iv_cdm:{data_args.task_name}"
+    query_embeddings, query_dim = build_query_embeddings(
+        {query_key: task_info["instruction"]},
+        data_args.query_embedding_cache,
+        data_args.query_text_encoder_path,
+        data_args.query_text_encoder_base_model,
+        data_args.query_max_length,
+    )
+
+    model = TaskQueryClassificationModel(
+        config=encoder_config,
+        embedding_matrix=embedding_matrix,
+        query_dim=query_dim,
+    )
 
     # 5. Load pre-trained weights (optional)
     if model_args.pretrained_path:
@@ -156,14 +185,21 @@ def main():
             lora_alpha=model_args.lora_alpha,
             lora_dropout=model_args.lora_dropout,
             target_modules=target_modules,
-            modules_to_save=["classifier", "item_proj", "unit_proj", "value_text_proj", "type_embedding", "numeric_proj"],
+            modules_to_save=["classifier", "query_head"],
             bias="none",
         )
         model = get_peft_model(model, lora_config)
         rank0_print("LoRA applied.")
 
     # 7. Trainer
-    collate_fn = create_collate_fn(type_vocab, label_map=LABEL_MAP, max_table_len=data_args.max_table_len)
+    collate_fn = create_query_collate_fn(
+        type_vocab,
+        label_map=LABEL_MAP,
+        max_table_len=data_args.max_table_len,
+        text_to_idx=text_to_idx,
+        pad_idx=pad_idx,
+        query_embed=query_embeddings[query_key],
+    )
 
     trainer_cls = Trainer
     trainer_kwargs = {}

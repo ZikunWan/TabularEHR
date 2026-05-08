@@ -27,13 +27,21 @@ def quiet_non_main_process_logs():
         logging.getLogger("deepspeed").setLevel(logging.ERROR)
 
 from dataset.ehrshot.ehrshot_dataset import EHRSHOTDataset
-from models.encoder_classifier import LongTableEncoderClassifier
+from dataset.ehrshot.task_info import get_task_info
 from models.TableEncoder.config import LongTableEncoder1DConfig
-from utils.load_embedding import load_embedding_cache
+from models.TableEncoder.query_classifier import TaskQueryClassificationModel
+from utils.load_embedding import (
+    build_embedding_matrix,
+    build_text_to_idx,
+    build_vocab_keys,
+    get_special_token_indices,
+    load_embedding_cache,
+)
 from utils.metrics import compute_classification_metrics
 from utils.samplers import TrainerWithBatchSampler, build_train_batch_sampler
 from utils.weight_loader import load_model_weights
-from utils.collate import create_collate_fn
+from utils.collate import create_query_collate_fn
+from utils.query_embedding import build_query_embeddings
 
 
 @dataclass
@@ -61,6 +69,10 @@ class DataArguments:
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
     task_name: str = field(default="lab_anemia", metadata={"help": "Comma-separated task names or 'all'"})
     type_vocab_file: str = field(default="/data/zikun_workspace/code/data/type_vocab.json", metadata={"help": "Path to type vocabulary JSON file"})
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt")
+    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
+    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
+    query_max_length: int = field(default=128)
     max_tokens_per_batch: Optional[int] = field(default=None, metadata={"help": "Enable ApproxBatchSampler when >0. This caps padded tokens per batch."})
     use_sortish_sampler: bool = field(default=True, metadata={"help": "Whether to use SortishSampler before ApproxBatchSampler packing."})
     sortish_chunk_factor: int = field(default=50, metadata={"help": "Sortish chunk factor. Larger means more sorting, less randomness."})
@@ -101,7 +113,11 @@ def main():
         os.environ["WANDB_PROJECT"] = training_args.wandb_project
     
     # 1. Load Embedding Cache
-    _, text_dim = load_embedding_cache(data_args.embedding_cache)
+    embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
+    vocab_keys = build_vocab_keys(embedding_cache)
+    text_to_idx = build_text_to_idx(vocab_keys)
+    embedding_matrix = build_embedding_matrix(embedding_cache, vocab_keys)
+    pad_idx = get_special_token_indices(text_to_idx)["pad_idx"]
     
     task_name = data_args.task_name.strip()
     is_multiclass_task = task_name.startswith("lab_")
@@ -152,13 +168,34 @@ def main():
     encoder_config = LongTableEncoder1DConfig(
         text_dim=text_dim,
         type_vocab_size=len(type_vocab),
+        max_table_len=data_args.max_table_len,
         num_classes=4 if is_multiclass_task else 1,
         problem_type="single_label_classification"
     )
 
-    model = LongTableEncoderClassifier(config=encoder_config)
+    task_info = get_task_info()[task_name]
+    query_key = f"ehrshot:{task_name}"
+    query_embeddings, query_dim = build_query_embeddings(
+        {query_key: task_info["instruction"]},
+        data_args.query_embedding_cache,
+        data_args.query_text_encoder_path,
+        data_args.query_text_encoder_base_model,
+        data_args.query_max_length,
+    )
+
+    model = TaskQueryClassificationModel(
+        config=encoder_config,
+        embedding_matrix=embedding_matrix,
+        query_dim=query_dim,
+    )
     
-    collate_fn = create_collate_fn(type_vocab, max_table_len=data_args.max_table_len)
+    collate_fn = create_query_collate_fn(
+        type_vocab,
+        max_table_len=data_args.max_table_len,
+        text_to_idx=text_to_idx,
+        pad_idx=pad_idx,
+        query_embed=query_embeddings[query_key],
+    )
     
     callbacks = []
     if training_args.early_stopping_patience > 0 and training_args.eval_strategy != "no":
@@ -185,17 +222,6 @@ def main():
             f"use_sortish_sampler={data_args.use_sortish_sampler}"
         )
 
-    trainer = trainer_cls(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-        data_collator=collate_fn,
-        compute_metrics=compute_classification_metrics,
-        callbacks=callbacks if callbacks else None,
-        **trainer_kwargs,
-    )
-
     if model_args.pretrained_path:
         model = load_model_weights(model, model_args.pretrained_path, use_lora=False, is_trainable=False)
 
@@ -206,11 +232,22 @@ def main():
             lora_alpha=model_args.lora_alpha,
             lora_dropout=model_args.lora_dropout,
             target_modules=target_modules,
-            modules_to_save=["classifier", "item_proj", "unit_proj", "value_text_proj", "type_embedding", "numeric_proj"],
+            modules_to_save=["classifier", "query_head"],
             bias="none",
         )
         model = get_peft_model(model, lora_config)
         rank0_print(f"LoRA applied.")
+
+    trainer = trainer_cls(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        data_collator=collate_fn,
+        compute_metrics=compute_classification_metrics,
+        callbacks=callbacks if callbacks else None,
+        **trainer_kwargs,
+    )
 
     rank0_print(f"Starting training for {task_name}...")
     trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)

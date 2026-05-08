@@ -1,26 +1,31 @@
-export GPUS_PER_NODE=4
-
-torchrun --nproc_per_node=$GPUS_PER_NODE ./pretraining/contrastive_learning.py \
+deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
     --deepspeed "./ds_config_zero2.json" \
-    --root_dir "/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular" \
-    --train_info_path "/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular/task_index/train/contrastive_learning.csv" \
-    --val_info_path "/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular/task_index/val/contrastive_learning.csv" \
-    --num_negatives 1024 \
-    --per_device_train_batch_size 512 \
+    --root_dir "/data/zikun_workspace/mimic-iv-3.1_tabular" \
+    --sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv" \
+    --val_sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val/next_token_prediction.csv" \
+    --table_text_embedding "/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt" \
+    --type_vocab_file "/data/zikun_workspace/code/data/type_vocab.json" \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction" \
+    --max_table_len 4096 \
+    --table_drop_ratio 0.15 \
+    --per_device_train_batch_size 32 \
+    --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 1 \
-    --dataloader_num_workers 16 \
-    --learning_rate 1e-4 \
+    --dataloader_num_workers 32 \
+    --learning_rate 1e-5 \
     --temperature 0.07 \
-    --warmup_steps 50 \
-    --num_train_epochs 100 \
-    --logging_steps 10  \
-    --save_steps 50 \
-    --run_name "0.2_ratio" \
-    --run_project "contrastive_learning" \
-    --output_dir "/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/contrastive_learning" \
-    --sort_by_table_length True \
-    --short_table_ratio 0.2 \
+    --warmup_steps 100 \
+    --weight_decay 0.01 \
+    --num_train_epochs 5 \
+    --logging_steps 10 \
+    --save_steps 100 \
     --eval_strategy "steps" \
-    --eval_steps 50 \
-    --early_stopping_patience 20 \
-    --metric_for_best_model "eval_recall@10"
+    --eval_steps 100 \
+    --early_stopping_patience 10 \
+    --metric_for_best_model "eval_recall@5" \
+    --save_total_limit 1 \
+    --bf16 true \
+    --report_to "wandb" \
+    --wandb_project "Contrastive_Learning" \
+    --run_name "contrastive_learning_table_drop_1d" \
+    --output_dir "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning"

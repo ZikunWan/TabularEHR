@@ -31,11 +31,18 @@ def quiet_non_main_process_logs():
         logging.getLogger("deepspeed").setLevel(logging.ERROR)
 
 from dataset.renji_dataset import RenjiDataset
-from models.encoder_classifier import LongTableEncoderClassifier
 from models.TableEncoder.config import LongTableEncoder1DConfig
+from models.TableEncoder.query_classifier import TaskQueryClassificationModel
 from utils.weight_loader import load_model_weights
-from utils.load_embedding import load_embedding_cache, get_embedding
-from utils.collate import create_collate_fn
+from utils.load_embedding import (
+    build_embedding_matrix,
+    build_text_to_idx,
+    build_vocab_keys,
+    get_special_token_indices,
+    load_embedding_cache,
+)
+from utils.collate import create_query_collate_fn
+from utils.query_embedding import build_query_embeddings
 
 @dataclass
 class ModelArguments:
@@ -59,6 +66,10 @@ class DataArguments:
     embedding_cache: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/.cache/embeddings/renji/text_embeddings.pt")
     max_train_samples: Optional[int] = field(default=None)
     type_vocab_file: str = field(default="data/type_vocab.json")
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt")
+    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
+    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
+    query_max_length: int = field(default=128)
 
 
 @dataclass
@@ -93,7 +104,11 @@ def main():
     training_args.ddp_find_unused_parameters = False
     set_seed(training_args.seed)
 
-    _, text_dim = load_embedding_cache(data_args.embedding_cache)
+    embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
+    vocab_keys = build_vocab_keys(embedding_cache)
+    text_to_idx = build_text_to_idx(vocab_keys)
+    embedding_matrix = build_embedding_matrix(embedding_cache, vocab_keys)
+    pad_idx = get_special_token_indices(text_to_idx)["pad_idx"]
     
     vocab_path = os.path.join(project_root, data_args.type_vocab_file)
     with open(vocab_path, 'r') as f:
@@ -107,13 +122,32 @@ def main():
     encoder_config = LongTableEncoder1DConfig(
         text_dim=text_dim,
         type_vocab_size=len(type_vocab),
+        max_table_len=data_args.max_table_len,
         num_points=len(RenjiDataset.ALL_POINTS),
         num_metrics=len(RenjiDataset.ALL_METRICS),
         num_classes=len(RenjiDataset.ALL_POINTS) * len(RenjiDataset.ALL_METRICS),
         problem_type="multi_label_classification"
     )
     
-    model = LongTableEncoderClassifier(config=encoder_config)
+    query_texts = {}
+    query_template = RenjiDataset.TASK_INFO["multi_label_prediction"]["instruction_template"]
+    for point_key in RenjiDataset.ALL_POINTS:
+        _, _, readable_point = RenjiDataset.TASK_PREDICTION_POINTS[point_key]
+        instruction = query_template.format(prediction_point=f"{readable_point} post-transplant")
+        query_texts[instruction] = instruction
+    query_embeddings_by_text, query_dim = build_query_embeddings(
+        query_texts,
+        data_args.query_embedding_cache,
+        data_args.query_text_encoder_path,
+        data_args.query_text_encoder_base_model,
+        data_args.query_max_length,
+    )
+
+    model = TaskQueryClassificationModel(
+        config=encoder_config,
+        embedding_matrix=embedding_matrix,
+        query_dim=query_dim,
+    )
     model = load_model_weights(model, model_args.pretrained_path, use_lora=False, is_trainable=False)
     
     if model_args.use_lora:
@@ -127,7 +161,7 @@ def main():
             lora_cfg = LoraConfig(
                 r=model_args.lora_r, lora_alpha=model_args.lora_alpha, lora_dropout=model_args.lora_dropout, bias="none",
                 target_modules=target_modules,
-                modules_to_save=["classifier", "item_proj", "unit_proj", "value_text_proj", "type_embedding", "numeric_proj"],
+                modules_to_save=["classifier", "query_head"],
             )
             model = get_peft_model(model, lora_cfg)
         model.print_trainable_parameters()
@@ -135,7 +169,13 @@ def main():
     trainer = Trainer(
         model=model, args=training_args,
         train_dataset=train_dataset,
-        data_collator=create_collate_fn(type_vocab, max_table_len=data_args.max_table_len),
+        data_collator=create_query_collate_fn(
+            type_vocab,
+            max_table_len=data_args.max_table_len,
+            text_to_idx=text_to_idx,
+            pad_idx=pad_idx,
+            query_embeddings_by_text=query_embeddings_by_text,
+        ),
     )
 
     resume_ckpt = None

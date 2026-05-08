@@ -38,9 +38,12 @@ for TASK in "${TASKS[@]}"; do
         --output_dir "/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/ehr_bench/${TASK}_using_stage1_pretraining" \
         --run_name "ehr_bench_${TASK}_using_stage1_pretraining" \
         --task_name "$TASK" \
-        --pretrained_path "/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/contrastive_learning" \
+        --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/task_query_classification" \
         --train_sample_info_path "$TRAIN_INFO_PATH" \
         --val_sample_info_path "$VAL_INFO_PATH" \
+        --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt" \
+        --query_text_encoder_path "/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt" \
+        --query_text_encoder_base_model "/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT" \
         --max_table_len 4096 \
         --per_device_train_batch_size 16 \
         --per_device_eval_batch_size 32 \

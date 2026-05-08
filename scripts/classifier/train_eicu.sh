@@ -36,6 +36,10 @@ for i in "${!TASKS[@]}"; do
     --output_dir "/data/zikun_workspace/checkpoints/eicu/${TASK}" \
     --run_name "eicu_${TASK}" \
     --task_name "$TASK" \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/task_query_classification" \
+    --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt" \
+    --query_text_encoder_path "/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt" \
+    --query_text_encoder_base_model "/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT" \
     --max_table_len 32768 \
     --per_device_train_batch_size 128 \
     --per_device_eval_batch_size 128 \

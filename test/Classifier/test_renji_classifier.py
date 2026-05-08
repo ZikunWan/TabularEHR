@@ -13,11 +13,18 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.append(project_root)
 
 from dataset.renji_dataset import RenjiDataset
-from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import LongTableEncoderMemoryConfig
+from models.TableEncoder.config import LongTableEncoder1DConfig
+from models.TableEncoder.query_classifier import TaskQueryClassificationModel
 from utils.weight_loader import load_model_weights
-from utils.load_embedding import load_embedding_cache
-from utils.collate import create_collate_fn
+from utils.load_embedding import (
+    build_embedding_matrix,
+    build_text_to_idx,
+    build_vocab_keys,
+    get_special_token_indices,
+    load_embedding_cache,
+)
+from utils.collate import create_query_collate_fn
+from utils.query_embedding import build_query_embeddings
 
 @dataclass
 class ModelArguments:
@@ -35,13 +42,21 @@ class DataArguments:
     split: str = field(default="test", metadata={"help": "Dataset split to evaluate on (test/val/train)"})
     seed: int = field(default=42)
     type_vocab_file: str = field(default="data/type_vocab.json")
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt")
+    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
+    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
+    query_max_length: int = field(default=128)
 
 def main():
     parser = HfArgumentParser((ModelArguments, DataArguments))
     model_args, data_args = parser.parse_args_into_dataclasses()
     
     set_seed(data_args.seed)
-    _, text_dim = load_embedding_cache(data_args.embedding_cache)
+    embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
+    vocab_keys = build_vocab_keys(embedding_cache)
+    text_to_idx = build_text_to_idx(vocab_keys)
+    embedding_matrix = build_embedding_matrix(embedding_cache, vocab_keys)
+    pad_idx = get_special_token_indices(text_to_idx)["pad_idx"]
     
     test_dataset = RenjiDataset(
         root_dir=data_args.data_dir, split=data_args.split, table_mode="table_only", shuffle=False,
@@ -53,16 +68,35 @@ def main():
     with open(vocab_path, 'r') as f:
         type_vocab = json.load(f)
 
-    encoder_config = LongTableEncoderMemoryConfig(
+    encoder_config = LongTableEncoder1DConfig(
         text_dim=text_dim,
         type_vocab_size=len(type_vocab),
+        max_table_len=data_args.max_table_len,
         num_points=len(RenjiDataset.ALL_POINTS),
         num_metrics=len(RenjiDataset.ALL_METRICS),
         num_classes=len(RenjiDataset.ALL_POINTS) * len(RenjiDataset.ALL_METRICS),
         problem_type="multi_label_classification"
     )
     
-    model = LongTableEncoderClassifier(config=encoder_config)
+    query_texts = {}
+    query_template = RenjiDataset.TASK_INFO["multi_label_prediction"]["instruction_template"]
+    for point_key in RenjiDataset.ALL_POINTS:
+        _, _, readable_point = RenjiDataset.TASK_PREDICTION_POINTS[point_key]
+        instruction = query_template.format(prediction_point=f"{readable_point} post-transplant")
+        query_texts[instruction] = instruction
+    query_embeddings_by_text, query_dim = build_query_embeddings(
+        query_texts,
+        data_args.query_embedding_cache,
+        data_args.query_text_encoder_path,
+        data_args.query_text_encoder_base_model,
+        data_args.query_max_length,
+    )
+
+    model = TaskQueryClassificationModel(
+        config=encoder_config,
+        embedding_matrix=embedding_matrix,
+        query_dim=query_dim,
+    )
 
     if model_args.pretrained_path:
         model = load_model_weights(model, model_args.pretrained_path, use_lora=False, is_trainable=False)
@@ -84,7 +118,13 @@ def main():
     trainer = Trainer(
         model=model,
         args=training_args,
-        data_collator=create_collate_fn(type_vocab, max_table_len=data_args.max_table_len),
+        data_collator=create_query_collate_fn(
+            type_vocab,
+            max_table_len=data_args.max_table_len,
+            text_to_idx=text_to_idx,
+            pad_idx=pad_idx,
+            query_embeddings_by_text=query_embeddings_by_text,
+        ),
     )
     
     print("Starting evaluation...")

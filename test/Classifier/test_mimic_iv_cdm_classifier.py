@@ -16,11 +16,19 @@ if mimic_iv_cdm_dataset_root not in sys.path:
     sys.path.append(mimic_iv_cdm_dataset_root)
 
 from dataset.mimic_iv_cdm.mimic_iv_cdm_dataset import MIMICIVCDM
-from models.encoder_classifier import LongTableEncoderClassifier
-from models.TableEncoder.config import LongTableEncoderMemoryConfig
+from dataset.mimic_iv_cdm.task_info import get_task_info
+from models.TableEncoder.config import LongTableEncoder1DConfig
+from models.TableEncoder.query_classifier import TaskQueryClassificationModel
 
-from utils.collate import create_collate_fn
-from utils.load_embedding import load_embedding_cache
+from utils.collate import create_query_collate_fn
+from utils.load_embedding import (
+    build_embedding_matrix,
+    build_text_to_idx,
+    build_vocab_keys,
+    get_special_token_indices,
+    load_embedding_cache,
+)
+from utils.query_embedding import build_query_embeddings
 from utils.weight_loader import load_model_weights
 
 LABEL_MAP = {
@@ -33,7 +41,6 @@ NUM_CLASSES = len(LABEL_MAP)
 
 @dataclass
 class ModelArguments:
-    dim_out: Optional[int] = field(default=None, metadata={"help": "Classifier/encoder output dimension used by the checkpoint. Use None to keep config.dim."})
     use_lora: bool = field(default=False, metadata={"help": "Set True if the checkpoint was saved with LoRA (PEFT) and adapter_config.json is absent/needs override"})
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to base transformer weights (e.g., google/tapas-base) if the model requires them before loading the classifier head/adapter."})
 
@@ -48,6 +55,10 @@ class DataArguments:
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
     task_name: str = field(default="MIMIC-IV-CDM Main Disease Diagnoses", metadata={"help": "The specific task name to test"})
     type_vocab_file: str = field(default="/data/zikun_workspace/code/data/type_vocab.json", metadata={"help": "Path to type vocabulary JSON file"})
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt")
+    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
+    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
+    query_max_length: int = field(default=128)
     seed: int = field(default=42, metadata={"help": "Random seed"})
 
 def main():
@@ -67,7 +78,11 @@ def main():
     print(f"Task: {data_args.task_name}")
 
     # 1. Load Embedding Cache
-    _, text_dim = load_embedding_cache(data_args.embedding_cache)
+    embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
+    vocab_keys = build_vocab_keys(embedding_cache)
+    text_to_idx = build_text_to_idx(vocab_keys)
+    embedding_matrix = build_embedding_matrix(embedding_cache, vocab_keys)
+    pad_idx = get_special_token_indices(text_to_idx)["pad_idx"]
     
     # Load Type Vocab defaults
     type_vocab = None
@@ -108,24 +123,36 @@ def main():
 
     checkpoint_config = os.path.join(data_args.checkpoint_dir, "config.json")
     if os.path.exists(checkpoint_config):
-        encoder_config = LongTableEncoderMemoryConfig.from_pretrained(data_args.checkpoint_dir)
+        encoder_config = LongTableEncoder1DConfig.from_pretrained(data_args.checkpoint_dir)
         encoder_config.text_dim = text_dim
         encoder_config.type_vocab_size = len(type_vocab)
+        encoder_config.max_table_len = data_args.max_table_len
         encoder_config.num_classes = NUM_CLASSES
         encoder_config.problem_type = "single_label_classification"
-        if model_args.dim_out is not None:
-            encoder_config.dim_out = model_args.dim_out
     else:
-        encoder_config = LongTableEncoderMemoryConfig(
+        encoder_config = LongTableEncoder1DConfig(
             text_dim=text_dim,
             type_vocab_size=len(type_vocab),
-            dim_out=model_args.dim_out,
+            max_table_len=data_args.max_table_len,
             num_classes=NUM_CLASSES,
             problem_type="single_label_classification"
         )
-    print(f"dim_out: {encoder_config.dim_out}")
 
-    model = LongTableEncoderClassifier(config=encoder_config)
+    task_info = get_task_info()[data_args.task_name]
+    query_key = f"mimic_iv_cdm:{data_args.task_name}"
+    query_embeddings, query_dim = build_query_embeddings(
+        {query_key: task_info["instruction"]},
+        data_args.query_embedding_cache,
+        data_args.query_text_encoder_path,
+        data_args.query_text_encoder_base_model,
+        data_args.query_max_length,
+    )
+
+    model = TaskQueryClassificationModel(
+        config=encoder_config,
+        embedding_matrix=embedding_matrix,
+        query_dim=query_dim,
+    )
 
     # 4. Load weights — auto-detect LoRA vs plain checkpoint
     if model_args.pretrained_path:
@@ -148,7 +175,14 @@ def main():
     trainer = Trainer(
         model=model,
         args=training_args,
-        data_collator=create_collate_fn(type_vocab, label_map=LABEL_MAP, max_table_len=data_args.max_table_len),
+        data_collator=create_query_collate_fn(
+            type_vocab,
+            label_map=LABEL_MAP,
+            max_table_len=data_args.max_table_len,
+            text_to_idx=text_to_idx,
+            pad_idx=pad_idx,
+            query_embed=query_embeddings[query_key],
+        ),
     )
     
     print("Starting evaluation...")
