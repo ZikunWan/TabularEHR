@@ -1,8 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-cd /data/zikun_workspace/code
-
 dataset_kwargs="["
 for task_name in \
   guo_los \
