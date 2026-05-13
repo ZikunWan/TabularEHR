@@ -151,9 +151,17 @@ def safe_destroy_process_group():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/model_weights/BlueZeros/EHR-R1-1.7B")
-    parser.add_argument("--root_dir", type=str, default="/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular")
-    parser.add_argument("--sample_csv", type=str, default="/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular/task_index/train_val/contrastive_learning.csv")
-    parser.add_argument("--output_dir", type=str, default="/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular/embeddings/table_free_text")
+    parser.add_argument("--root_dir", type=str, default="/data/zikun_workspace/mimic-iv-3.1_tabular")
+    parser.add_argument(
+        "--sample_csv",
+        type=str,
+        nargs="+",
+        default=[
+            "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv",
+            "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val/next_token_prediction.csv",
+        ],
+    )
+    parser.add_argument("--output_dir", type=str, default="/data/zikun_workspace/mimic-iv-3.1_tabular/embeddings/table_free_text")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--max_length", type=int, default=32000)
     parser.add_argument("--save_steps", type=int, default=100, help="Save processing checkpoint every N batches")
@@ -210,17 +218,28 @@ def main():
     if accelerator.is_main_process:
         print("📊 Loading Dataset...")
         
-    # only_structed_ehr=True returns:
+    # table_mode="table_only" returns:
     # - sample['input']: table-aligned markdown-like text
     # - sample['structured_text_blocks']: block list used to build the input text
     # - sample['measurement_table_row_block_ids']: row->block alignment metadata
     dataset = MIMICIV(
         root_dir=args.root_dir,
-        sample_info_path=args.sample_csv,
+        sample_info_path=args.sample_csv[0],
         lazy_mode=True,
         shuffle=False,
-        only_structed_ehr=True,
+        table_mode="table_only",
+        use_table_length_cache=False,
     )
+    for sample_csv in args.sample_csv[1:]:
+        extra_dataset = MIMICIV(
+            root_dir=args.root_dir,
+            sample_info_path=sample_csv,
+            lazy_mode=True,
+            shuffle=False,
+            table_mode="table_only",
+            use_table_length_cache=False,
+        )
+        dataset.sample_info.extend(extra_dataset.sample_info)
     
     # Tag original indices to properly map to the embeddings cache dict later,
     # because filtering changes the array positions!

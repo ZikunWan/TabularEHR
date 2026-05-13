@@ -15,12 +15,12 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from dataset.mimic.mimic_dataset import MIMICIV
-from train.MEDS_encoder.train_ehr_bench_llama import (
+from train.Llama.train_ehr_bench_llama import (
     ALL_RISK_PREDICTION_TASKS,
     EHRBenchMEDSDataCollator,
     _build_label_metadata,
 )
-from train.MEDS_encoder.train_ehrshot_llama import (
+from train.Llama.train_ehrshot_llama import (
     CLASSIFICATION_HEAD_METADATA_FILENAME,
     CLASSIFICATION_HEAD_STATE_FILENAME,
     LlamaMEDSClassifier,
@@ -34,21 +34,15 @@ TRAIN_METADATA_FILENAME = "sequence_classification_metadata.json"
 @dataclass
 class ModelArguments:
     checkpoint_dir: str = field(metadata={"help": "Path to fine-tuned classifier checkpoint directory."})
-    model_name_or_path: Optional[str] = field(
-        default=None,
-        metadata={"help": "Optional base encoder path override. If unset, read from checkpoint metadata."},
-    )
 
 
 @dataclass
 class DataArguments:
+    sample_info_path: str = field(metadata={"help": "Path to test CSV."})
+    output_dir: str = field(metadata={"help": "Directory for evaluation outputs."})
     data_dir: str = field(
         default="/data/zikun_workspace/mimic-iv-3.1_tabular",
         metadata={"help": "Root directory for MIMIC-IV tabular data used by EHR-Bench."},
-    )
-    sample_info_path: Optional[str] = field(
-        default=None,
-        metadata={"help": "Path to test CSV. Defaults to <data_dir>/task_index/test/<task_name>.csv."},
     )
     task_name: str = field(
         default="ED_Hospitalization",
@@ -58,7 +52,6 @@ class DataArguments:
     max_seq_length: int = field(default=4096, metadata={"help": "Maximum tokenized sequence length."})
     batch_size: int = field(default=16, metadata={"help": "Evaluation batch size."})
     seed: int = field(default=42, metadata={"help": "Random seed."})
-    output_dir: Optional[str] = field(default=None, metadata={"help": "Directory for evaluation outputs."})
     lazy_mode: bool = field(default=True, metadata={"help": "Load test samples lazily."})
     itemid_representation: str = field(
         default="code",
@@ -70,68 +63,15 @@ class DataArguments:
     )
 
 
-def _load_json_if_exists(path: str):
-    if os.path.isfile(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return None
+def _load_json(path: str):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-def _resolve_base_model_path(model_args: ModelArguments, head_metadata: Optional[dict], train_metadata: Optional[dict]):
-    if model_args.model_name_or_path:
-        return model_args.model_name_or_path
-    if head_metadata and head_metadata.get("base_model_name_or_path"):
-        return head_metadata["base_model_name_or_path"]
-    if train_metadata and train_metadata.get("model_name_or_path"):
-        return train_metadata["model_name_or_path"]
-    raise ValueError(
-        "Cannot resolve base encoder path. Please pass --model_name_or_path or ensure checkpoint has metadata "
-        f"file `{CLASSIFICATION_HEAD_METADATA_FILENAME}` or `{TRAIN_METADATA_FILENAME}`."
-    )
-
-
-def _load_state_dict_for_eval(checkpoint_dir: str):
+def _load_classifier_state_dict(checkpoint_dir: str):
     head_path = os.path.join(checkpoint_dir, CLASSIFICATION_HEAD_STATE_FILENAME)
-    if os.path.isfile(head_path):
-        state_dict = torch.load(head_path, map_location="cpu")
-        return state_dict, "classifier_head"
-
-    bin_path = os.path.join(checkpoint_dir, "pytorch_model.bin")
-    if os.path.isfile(bin_path):
-        state_dict = torch.load(bin_path, map_location="cpu")
-        return state_dict, "full_model_bin"
-
-    safetensors_path = os.path.join(checkpoint_dir, "model.safetensors")
-    if os.path.isfile(safetensors_path):
-        from safetensors.torch import load_file as load_safetensors_file
-
-        state_dict = load_safetensors_file(safetensors_path, device="cpu")
-        return state_dict, "full_model_safetensors"
-
-    raise FileNotFoundError(
-        f"No checkpoint weights found in {checkpoint_dir}. Expected one of: "
-        f"{CLASSIFICATION_HEAD_STATE_FILENAME}, pytorch_model.bin, model.safetensors"
-    )
-
-
-def _normalize_state_dict_keys(state_dict: dict):
-    removable_prefixes = ("module.", "_orig_mod.")
-    normalized = {}
-    for key, value in state_dict.items():
-        normalized_key = key
-        for prefix in removable_prefixes:
-            if normalized_key.startswith(prefix):
-                normalized_key = normalized_key[len(prefix):]
-        normalized[normalized_key] = value
-    return normalized
-
-
-def _load_tokenizer(checkpoint_dir: str, base_model_name_or_path: str):
-    try:
-        return _load_clmbr_tokenizer(checkpoint_dir)
-    except Exception:
-        rank0_print("Tokenizer not found in checkpoint dir; falling back to base model tokenizer.")
-        return _load_clmbr_tokenizer(base_model_name_or_path)
+    state_dict = torch.load(head_path, map_location="cpu")
+    return {key[len("classifier."):]: value for key, value in state_dict.items()}
 
 
 def _compute_sequence_classification_metrics(logits, labels, task_name: str, idx_list=None, id2label: Optional[dict] = None):
@@ -153,13 +93,10 @@ def _compute_sequence_classification_metrics(logits, labels, task_name: str, idx
     acc = accuracy_score(labels, preds)
     macro_f1 = f1_score(labels, preds, average="macro")
 
-    try:
-        if probs.shape[1] == 2:
-            auroc = roc_auc_score(labels, probs[:, 1])
-        else:
-            auroc = roc_auc_score(labels, probs, multi_class="ovr", average="macro")
-    except ValueError:
-        auroc = 0.5
+    if probs.shape[1] == 2:
+        auroc = roc_auc_score(labels, probs[:, 1])
+    else:
+        auroc = roc_auc_score(labels, probs, multi_class="ovr", average="macro")
 
     metrics_df = pd.DataFrame(
         [
@@ -176,15 +113,15 @@ def _compute_sequence_classification_metrics(logits, labels, task_name: str, idx
 
     raw_df = pd.DataFrame(
         {
-            "idx": list(range(len(labels))) if idx_list is None else list(idx_list),
+            "idx": list(idx_list),
             "label": labels.tolist(),
             "pred": preds.tolist(),
             "prob": probs.tolist(),
         }
     )
     if id2label is not None:
-        raw_df["label_name"] = [id2label.get(int(label), label) for label in labels]
-        raw_df["pred_name"] = [id2label.get(int(pred), pred) for pred in preds]
+        raw_df["label_name"] = [id2label[int(label)] for label in labels]
+        raw_df["pred_name"] = [id2label[int(pred)] for pred in preds]
 
     return metrics_df, raw_df
 
@@ -200,26 +137,22 @@ def main():
         )
     set_seed(data_args.seed)
 
-    if not os.path.isdir(model_args.checkpoint_dir):
-        raise FileNotFoundError(f"Checkpoint directory not found: {model_args.checkpoint_dir}")
-
-    head_metadata = _load_json_if_exists(os.path.join(model_args.checkpoint_dir, CLASSIFICATION_HEAD_METADATA_FILENAME))
-    train_metadata = _load_json_if_exists(os.path.join(model_args.checkpoint_dir, TRAIN_METADATA_FILENAME))
-    base_model_name_or_path = _resolve_base_model_path(model_args, head_metadata, train_metadata)
+    head_metadata = _load_json(os.path.join(model_args.checkpoint_dir, CLASSIFICATION_HEAD_METADATA_FILENAME))
+    train_metadata = _load_json(os.path.join(model_args.checkpoint_dir, TRAIN_METADATA_FILENAME))
+    base_model_name_or_path = train_metadata["model_name_or_path"]
 
     candidates, label_to_id, id_to_label = _build_label_metadata(data_args.task_name)
-    if train_metadata and train_metadata.get("task_name") and train_metadata["task_name"] != data_args.task_name:
+    if train_metadata["task_name"] != data_args.task_name:
         raise ValueError(
             f"Task mismatch: checkpoint was trained for '{train_metadata['task_name']}' "
             f"but evaluation task is '{data_args.task_name}'."
         )
-    if head_metadata and head_metadata.get("num_labels") is not None:
-        checkpoint_num_labels = int(head_metadata["num_labels"])
-        if checkpoint_num_labels != len(candidates):
-            raise ValueError(
-                f"Label count mismatch: checkpoint expects {checkpoint_num_labels} labels, "
-                f"but task '{data_args.task_name}' has {len(candidates)} labels."
-            )
+    checkpoint_num_labels = int(head_metadata["num_labels"])
+    if checkpoint_num_labels != len(candidates):
+        raise ValueError(
+            f"Label count mismatch: checkpoint expects {checkpoint_num_labels} labels, "
+            f"but task '{data_args.task_name}' has {len(candidates)} labels."
+        )
 
     rank0_print("=" * 80)
     rank0_print("EHR-Bench MEDS Llama Encoder Classifier Test")
@@ -229,9 +162,9 @@ def main():
     rank0_print(f"Task: {data_args.task_name}")
     rank0_print(f"Max seq length: {data_args.max_seq_length}")
     rank0_print(f"ItemID representation: {data_args.itemid_representation}")
-    rank0_print(f"Concept map dir: {data_args.concept_map_dir or '(default under data_dir/index_mapping)'}")
+    rank0_print(f"Concept map dir: {data_args.concept_map_dir}")
 
-    tokenizer = _load_tokenizer(model_args.checkpoint_dir, base_model_name_or_path)
+    tokenizer = _load_clmbr_tokenizer(model_args.checkpoint_dir)
     model = LlamaMEDSClassifier(
         model_name_or_path=base_model_name_or_path,
         num_labels=len(candidates),
@@ -240,34 +173,11 @@ def main():
         freeze_encoder=True,
         tokenizer_vocab_size=int(tokenizer.vocab_size),
     )
-    adapter_config_path = os.path.join(model_args.checkpoint_dir, "adapter_config.json")
-    if os.path.isfile(adapter_config_path):
-        from peft import PeftModel
+    model.classifier.load_state_dict(_load_classifier_state_dict(model_args.checkpoint_dir))
 
-        model.encoder = PeftModel.from_pretrained(model.encoder, model_args.checkpoint_dir, is_trainable=False)
-        rank0_print("Loaded PEFT adapter from checkpoint.")
-
-    state_dict, checkpoint_kind = _load_state_dict_for_eval(model_args.checkpoint_dir)
-    state_dict = _normalize_state_dict_keys(state_dict)
-    load_result = model.load_state_dict(state_dict, strict=False)
-    unexpected_keys = list(getattr(load_result, "unexpected_keys", []))
-    missing_keys = list(getattr(load_result, "missing_keys", []))
-    missing_classifier_keys = [key for key in missing_keys if key.startswith("classifier.")]
-    if unexpected_keys:
-        raise ValueError(f"Unexpected keys while loading checkpoint: {unexpected_keys}")
-    if missing_classifier_keys:
-        raise ValueError(f"Classifier keys missing while loading checkpoint: {missing_classifier_keys}")
-    rank0_print(f"Merged checkpoint type: {checkpoint_kind}")
-
-    sample_info_path = data_args.sample_info_path or os.path.join(
-        data_args.data_dir,
-        "task_index",
-        "test",
-        f"{data_args.task_name}.csv",
-    )
     eval_dataset = MIMICIV(
         root_dir=data_args.data_dir,
-        sample_info_path=sample_info_path,
+        sample_info_path=data_args.sample_info_path,
         lazy_mode=data_args.lazy_mode,
         shuffle=False,
         table_mode="text_only",
@@ -277,9 +187,6 @@ def main():
         return_meds=True,
     )
     rank0_print(f"test source [{data_args.task_name}, MEDS] size: {len(eval_dataset)}")
-    if len(eval_dataset) == 0:
-        rank0_print(f"[SKIP] Empty test dataset for task={data_args.task_name}.")
-        return
 
     data_collator = EHRBenchMEDSDataCollator(
         tokenizer=tokenizer,
@@ -288,7 +195,7 @@ def main():
         task_name=data_args.task_name,
     )
 
-    output_dir = data_args.output_dir or os.path.join(model_args.checkpoint_dir, "eval_logs")
+    output_dir = data_args.output_dir
     trainer = Trainer(
         model=model,
         args=TrainingArguments(
@@ -307,8 +214,7 @@ def main():
     if not trainer.is_world_process_zero():
         return
 
-    num_rows = len(predict_outputs.label_ids) if predict_outputs.label_ids is not None else len(predict_outputs.predictions)
-    idx_list = list(range(num_rows))
+    idx_list = list(range(len(predict_outputs.label_ids)))
     metrics_df, raw_df = _compute_sequence_classification_metrics(
         logits=predict_outputs.predictions,
         labels=predict_outputs.label_ids,

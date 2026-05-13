@@ -17,7 +17,7 @@ if PROJECT_ROOT not in sys.path:
 
 from dataset.mimic.mimic_dataset import MIMICIV
 from dataset.mimic.task_info import get_task_info
-from train.MEDS_encoder.train_ehrshot_llama import (
+from train.Llama.train_ehrshot_llama import (
     HeadOnlySequenceClassificationTrainer,
     LlamaMEDSClassifier,
     _copy_tokenizer_config_to_output,
@@ -54,13 +54,10 @@ def _normalize_label(raw_label) -> str:
     while len(label) >= 2 and label[0] == label[-1] and label[0] in {"'", '"'}:
         label = label[1:-1].strip()
 
-    # Normalize common numeric forms from CSV parsing (e.g., 1.0 -> 1).
-    try:
+    if label.replace(".", "", 1).isdigit():
         numeric = float(label)
         if numeric.is_integer():
             label = str(int(numeric))
-    except Exception:
-        pass
 
     lowered = label.lower()
     if lowered in {"yes", "y", "true"}:
@@ -106,11 +103,9 @@ def _build_label_metadata(task_name: str):
             f"MEDS encoder training does not support multi-label MIMIC task '{task_name}'."
         )
 
-    if "candidate" in task_info:
-        candidates = [str(candidate) for candidate in task_info["candidate"]]
-    elif task_type == "binary_classification":
+    if task_type == "binary_classification":
         candidates = ["0", "1"]
-    elif task_type == "multi_class_classification" and task_info.get("num_classes") is not None:
+    elif task_type == "multi_class_classification":
         candidates = [str(index) for index in range(int(task_info["num_classes"]))]
     else:
         raise ValueError(f"Unsupported MIMIC task_type '{task_type}' for task '{task_name}'.")
@@ -174,13 +169,12 @@ class EHRBenchMEDSDataCollator:
 
 @dataclass
 class ModelArguments:
+    tokenizer_config_path: str = field(
+        metadata={"help": "Path to tokenizer_config.json or directory containing it."},
+    )
     model_name_or_path: str = field(
         default="/data/model_weights_public/StanfordShahLab/llama-base-4096-clmbr",
         metadata={"help": "Path to StanfordShahLab llama-base-4096-clmbr weights."},
-    )
-    tokenizer_config_path: Optional[str] = field(
-        default=None,
-        metadata={"help": "Optional tokenizer_config.json path (or directory containing it)."},
     )
     freeze_encoder: bool = field(
         default=True,
@@ -209,6 +203,12 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
+    train_sample_info_path: str = field(
+        metadata={"help": "Path to train CSV."},
+    )
+    val_sample_info_path: str = field(
+        metadata={"help": "Path to val CSV."},
+    )
     data_dir: str = field(
         default="/data/zikun_workspace/mimic-iv-3.1_tabular",
         metadata={"help": "Root directory for MIMIC-IV tabular data used by EHR-Bench."},
@@ -216,14 +216,6 @@ class DataArguments:
     task_name: str = field(
         default="ED_Hospitalization",
         metadata={"help": f"EHR-Bench risk task. One of: {ALL_RISK_PREDICTION_TASKS}"},
-    )
-    train_sample_info_path: Optional[str] = field(
-        default=None,
-        metadata={"help": "Path to train CSV. Defaults to <data_dir>/task_index/train/<task_name>.csv."},
-    )
-    val_sample_info_path: Optional[str] = field(
-        default=None,
-        metadata={"help": "Path to val CSV. Defaults to <data_dir>/task_index/val/<task_name>.csv."},
     )
     max_train_samples: Optional[int] = field(default=None, metadata={"help": "Maximum train samples."})
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Maximum validation samples."})
@@ -265,30 +257,14 @@ def main():
             f"Supported tasks: {ALL_RISK_PREDICTION_TASKS}"
         )
 
-    train_info_path = data_args.train_sample_info_path or os.path.join(
-        data_args.data_dir,
-        "task_index",
-        "train",
-        f"{data_args.task_name}.csv",
-    )
-    val_info_path = data_args.val_sample_info_path or os.path.join(
-        data_args.data_dir,
-        "task_index",
-        "val",
-        f"{data_args.task_name}.csv",
-    )
-    if not os.path.isfile(train_info_path):
-        raise FileNotFoundError(f"Train CSV not found: {train_info_path}")
+    train_info_path = data_args.train_sample_info_path
+    val_info_path = data_args.val_sample_info_path
 
     training_args.remove_unused_columns = False
     training_args.save_safetensors = True
-    training_args.seed = getattr(training_args, "seed", 42) or 42
     training_args.bf16 = True
     training_args.fp16 = False
     set_seed(training_args.seed)
-
-    if training_args.eval_strategy != "no" and not os.path.isfile(val_info_path):
-        raise FileNotFoundError(f"Validation CSV not found: {val_info_path}")
 
     if (not model_args.freeze_encoder) and (not model_args.use_peft):
         raise ValueError(
@@ -314,18 +290,16 @@ def main():
     )
     rank0_print(f"Final train dataset size: {len(train_dataset)}")
 
-    eval_dataset = None
-    if training_args.eval_strategy != "no":
-        eval_dataset = _load_source_dataset(
-            data_args=data_args,
-            sample_info_path=val_info_path,
-            split_name="validation",
-            shuffle=False,
-            max_samples=data_args.max_eval_samples,
-        )
-        rank0_print(f"Final validation dataset size: {len(eval_dataset)}")
+    eval_dataset = _load_source_dataset(
+        data_args=data_args,
+        sample_info_path=val_info_path,
+        split_name="validation",
+        shuffle=False,
+        max_samples=data_args.max_eval_samples,
+    )
+    rank0_print(f"Final validation dataset size: {len(eval_dataset)}")
 
-    tokenizer_source = model_args.tokenizer_config_path or model_args.model_name_or_path
+    tokenizer_source = model_args.tokenizer_config_path
     tokenizer = _load_clmbr_tokenizer(tokenizer_source)
 
     rank0_print("=" * 80)
@@ -339,7 +313,7 @@ def main():
     rank0_print(f"Validation CSV: {val_info_path}")
     rank0_print(f"Max seq length: {data_args.max_seq_length}")
     rank0_print(f"ItemID representation: {data_args.itemid_representation}")
-    rank0_print(f"Concept map dir: {data_args.concept_map_dir or '(default under data_dir/index_mapping)'}")
+    rank0_print(f"Concept map dir: {data_args.concept_map_dir}")
     rank0_print(f"Freeze encoder: {model_args.freeze_encoder}")
     rank0_print(f"Use PEFT: {model_args.use_peft}")
     if model_args.use_peft:
@@ -379,7 +353,7 @@ def main():
                 f"but found non-classifier trainable parameters: {invalid_trainable[:5]}"
             )
     rank0_print(f"Trainable parameter tensors: {len(trainable_parameters)}")
-    rank0_print(f"Trainable parameter names: {', '.join(trainable_parameters) if trainable_parameters else 'None'}")
+    rank0_print(f"Trainable parameter names: {', '.join(trainable_parameters)}")
 
     data_collator = EHRBenchMEDSDataCollator(
         tokenizer=tokenizer,
@@ -394,7 +368,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        compute_metrics=compute_classification_metrics if eval_dataset is not None else None,
+        compute_metrics=compute_classification_metrics,
         callbacks=[
             EarlyStoppingCallback(
                 early_stopping_patience=model_args.early_stopping_patience,

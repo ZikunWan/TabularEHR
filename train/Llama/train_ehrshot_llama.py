@@ -2,7 +2,6 @@ import json
 import os
 import sys
 import shutil
-import hashlib
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
@@ -42,38 +41,9 @@ def rank0_print(*args, **kwargs):
 def _load_clmbr_tokenizer(model_name_or_path: str):
     from hf_ehr.data.tokenization import CLMBRTokenizer
 
-    # `hf_ehr`'s `from_pretrained()` expects a Hub repo id.
-    # For local checkpoints, load tokenizer config directly from disk.
     path = Path(model_name_or_path)
-    candidates = []
-    if path.is_file():
-        candidates.append(path)
-    elif path.is_dir():
-        candidates.extend(
-            [
-                path / "tokenizer_config.json",
-                path / "tokenizer_config_filtered.json",
-            ]
-        )
-
-    for config_path in candidates:
-        if config_path.is_file():
-            # `hf_ehr` tokenizer writes a `versions/` folder next to tokenizer_config.
-            # If source dir is read-only (common for shared model weights), copy to writable cache first.
-            if os.access(config_path.parent, os.W_OK):
-                return CLMBRTokenizer(path_to_tokenizer_config=str(config_path))
-
-            cache_root = Path(os.environ.get("HF_EHR_TOKENIZER_CACHE_DIR", "/tmp/hf_ehr_tokenizers"))
-            cache_key = hashlib.sha1(str(config_path.resolve()).encode("utf-8")).hexdigest()[:16]
-            cache_dir = cache_root / cache_key
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            cached_config = cache_dir / "tokenizer_config.json"
-            if not cached_config.exists():
-                shutil.copy2(config_path, cached_config)
-            return CLMBRTokenizer(path_to_tokenizer_config=str(cached_config))
-
-    # Fallback to Hub behavior when not a local path.
-    return CLMBRTokenizer.from_pretrained(model_name_or_path)
+    config_path = path if path.is_file() else path / "tokenizer_config.json"
+    return CLMBRTokenizer(path_to_tokenizer_config=str(config_path))
 
 
 def _build_label_metadata(task_name: str):
@@ -124,12 +94,11 @@ def _save_classifier_head(model, output_dir: str, state_dict: dict):
 
 
 def _copy_tokenizer_config_to_output(tokenizer, output_dir: str):
-    tokenizer_config_path = getattr(tokenizer, "path_to_tokenizer_config", None)
-    if isinstance(tokenizer_config_path, str) and os.path.isfile(tokenizer_config_path):
-        os.makedirs(output_dir, exist_ok=True)
-        checkpoint_tokenizer_path = os.path.join(output_dir, "tokenizer_config.json")
-        shutil.copy2(tokenizer_config_path, checkpoint_tokenizer_path)
-        rank0_print(f"Saved tokenizer config to {checkpoint_tokenizer_path}")
+    tokenizer_config_path = tokenizer.path_to_tokenizer_config
+    os.makedirs(output_dir, exist_ok=True)
+    checkpoint_tokenizer_path = os.path.join(output_dir, "tokenizer_config.json")
+    shutil.copy2(tokenizer_config_path, checkpoint_tokenizer_path)
+    rank0_print(f"Saved tokenizer config to {checkpoint_tokenizer_path}")
 
 
 def _save_training_metadata(
@@ -142,7 +111,7 @@ def _save_training_metadata(
 ):
     metadata = {
         "model_name_or_path": model_args.model_name_or_path,
-        "tokenizer_config_path": getattr(tokenizer, "path_to_tokenizer_config", None),
+        "tokenizer_config_path": tokenizer.path_to_tokenizer_config,
         "task_name": task_name,
         "freeze_encoder": bool(model_args.freeze_encoder),
         "use_peft": bool(model_args.use_peft),
@@ -160,23 +129,21 @@ def _save_training_metadata(
 
 class HeadOnlySequenceClassificationTrainer(Trainer):
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
-        output_dir = output_dir if output_dir is not None else self.args.output_dir
         model_to_save = self.accelerator.unwrap_model(self.model)
         _save_classifier_head(model_to_save, output_dir, state_dict=model_to_save.state_dict())
-        if getattr(model_to_save, "use_peft", False):
+        if model_to_save.use_peft:
             model_to_save.encoder.save_pretrained(output_dir, safe_serialization=self.args.save_safetensors)
         torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
 
 
 @dataclass
 class ModelArguments:
+    tokenizer_config_path: str = field(
+        metadata={"help": "Path to tokenizer_config.json or directory containing it."},
+    )
     model_name_or_path: str = field(
         default="/data/model_weights_public/StanfordShahLab/llama-base-4096-clmbr",
         metadata={"help": "Path to StanfordShahLab llama-base-4096-clmbr weights."},
-    )
-    tokenizer_config_path: Optional[str] = field(
-        default=None,
-        metadata={"help": "Optional tokenizer_config.json path (or directory containing it)."},
     )
     freeze_encoder: bool = field(
         default=True,
@@ -356,7 +323,7 @@ class LlamaMEDSClassifier(nn.Module):
         # When encoder is wrapped by PEFT (e.g., LoRA), call the wrapper forward so
         # adapter weights participate in computation; otherwise keep the lightweight
         # direct backbone path.
-        if hasattr(self.encoder, "peft_config"):
+        if self.use_peft:
             outputs = self.encoder(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -417,18 +384,11 @@ def main():
 
     train_info_path = data_args.train_info_path
     val_info_path = data_args.val_info_path
-    if not os.path.isfile(train_info_path):
-        raise FileNotFoundError(f"Training index CSV not found: {train_info_path}")
-
     training_args.remove_unused_columns = False
     training_args.save_safetensors = True
-    training_args.seed = getattr(training_args, "seed", 42) or 42
     training_args.bf16 = True
     training_args.fp16 = False
     set_seed(training_args.seed)
-
-    if training_args.eval_strategy != "no" and not os.path.isfile(val_info_path):
-        raise FileNotFoundError(f"Validation index CSV not found: {val_info_path}")
 
     if (not model_args.freeze_encoder) and (not model_args.use_peft):
         raise ValueError(
@@ -446,7 +406,7 @@ def main():
     training_args.load_best_model_at_end = True
 
     candidates, label_to_id, id_to_label = _build_label_metadata(data_args.task_name)
-    tokenizer_source = model_args.tokenizer_config_path or model_args.model_name_or_path
+    tokenizer_source = model_args.tokenizer_config_path
     tokenizer = _load_clmbr_tokenizer(tokenizer_source)
 
     rank0_print("=" * 80)
@@ -510,15 +470,13 @@ def main():
     )
     rank0_print(f"Final train dataset size: {len(train_dataset)}")
 
-    eval_dataset = None
-    if training_args.eval_strategy != "no":
-        eval_dataset = _load_source_dataset(
-            data_args=data_args,
-            sample_info_path=val_info_path,
-            split_name="validation",
-            max_samples=data_args.max_eval_samples,
-        )
-        rank0_print(f"Final validation dataset size: {len(eval_dataset)}")
+    eval_dataset = _load_source_dataset(
+        data_args=data_args,
+        sample_info_path=val_info_path,
+        split_name="validation",
+        max_samples=data_args.max_eval_samples,
+    )
+    rank0_print(f"Final validation dataset size: {len(eval_dataset)}")
 
     data_collator = MEDSDataCollator(
         tokenizer=tokenizer,
@@ -533,7 +491,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        compute_metrics=compute_classification_metrics if eval_dataset is not None else None,
+        compute_metrics=compute_classification_metrics,
         callbacks=[
             EarlyStoppingCallback(
                 early_stopping_patience=model_args.early_stopping_patience,

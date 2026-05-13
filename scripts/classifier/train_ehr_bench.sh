@@ -1,14 +1,15 @@
 #!/bin/bash
+export MIMIC_SKIP_SAMPLE_CACHE_CHECK=1
 NUM_GPUS=$(nvidia-smi -L | wc -l)
-cd /home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/train/Classifier
-TASK_INDEX_ROOT="/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular/task_index"
+cd train/Classifier
+TASK_INDEX_ROOT="/data/zikun_workspace/mimic-iv-3.1_tabular/task_index"
 
 TASKS=(
-    "ED_Hospitalization"
-    "ED_Inpatient_Mortality"
-    "ED_ICU_Tranfer_12hour"
-    "ED_Reattendance_3day"
-    "ED_Critical_Outcomes"
+    #"ED_Hospitalization"
+    #"ED_Inpatient_Mortality"
+    #"ED_ICU_Tranfer_12hour"
+    #"ED_Reattendance_3day"
+    #"ED_Critical_Outcomes"
     "Readmission_30day"
     "Readmission_60day"
     "Inpatient_Mortality"
@@ -29,34 +30,23 @@ for TASK in "${TASKS[@]}"; do
     echo "Training EHR-Bench Task: $TASK"
     echo "==================================="
 
-    EPOCHS=20
     TRAIN_INFO_PATH="${TASK_INDEX_ROOT}/train/${TASK}.csv"
     VAL_INFO_PATH="${TASK_INDEX_ROOT}/val/${TASK}.csv"
     
-    torchrun --nproc_per_node=$NUM_GPUS train_ehr_bench_classifier.py \
-        --deepspeed "/home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/ds_config_zero2.json" \
-        --output_dir "/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/ehr_bench/${TASK}_using_stage1_pretraining" \
-        --run_name "ehr_bench_${TASK}_using_stage1_pretraining" \
+    deepspeed --num_gpus=$NUM_GPUS train_ehr_bench_classifier.py \
+        --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
+        --output_dir "/data/zikun_workspace/checkpoints/ehr_bench/${TASK}/table_encoder/llm_query_scratch" \
+        --run_name "ehr_bench_${TASK}_llm_query_scratch" \
         --task_name "$TASK" \
-        --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/task_query_classification" \
         --train_sample_info_path "$TRAIN_INFO_PATH" \
         --val_sample_info_path "$VAL_INFO_PATH" \
-        --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt" \
-        --query_text_encoder_path "/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt" \
-        --query_text_encoder_base_model "/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT" \
-        --max_table_len 4096 \
-        --per_device_train_batch_size 16 \
-        --per_device_eval_batch_size 32 \
-        --num_train_epochs $EPOCHS \
+        --max_table_len 16384 \
+        --per_device_train_batch_size 32 \
+        --per_device_eval_batch_size 64 \
+        --num_train_epochs 100 \
         --learning_rate 1e-5 \
-        --lr_scheduler_type "cosine" \
-        --warmup_steps 100 \
-        --early_stopping_patience 5 \
-        --eval_strategy "steps" \
-        --eval_steps 100 \
-        --save_strategy "steps" \
-        --save_steps 100 \
-        --logging_steps 10 \
+        --early_stopping_patience 10 \
         --max_train_samples 3000 \
         --max_eval_samples 1000
+        #--pretrained_path "/data/zikun_workspace/checkpoints/pretraining/task_query_classification" \
 done

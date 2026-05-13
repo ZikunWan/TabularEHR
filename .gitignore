@@ -2,7 +2,7 @@
 .codex
 .vscode/
 wandb/
-
+.agents/
 __pycache__/
 *.py[cod]
 *.so

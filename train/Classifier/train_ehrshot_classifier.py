@@ -69,10 +69,9 @@ class DataArguments:
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
     task_name: str = field(default="lab_anemia", metadata={"help": "Comma-separated task names or 'all'"})
     type_vocab_file: str = field(default="/data/zikun_workspace/code/data/type_vocab.json", metadata={"help": "Path to type vocabulary JSON file"})
-    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt")
-    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
-    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
-    query_max_length: int = field(default=128)
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt")
+    query_llm_model_path: str = field(default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/model_weights/BlueZeros/EHR-R1-1.7B")
+    query_max_length: int = field(default=512)
     max_tokens_per_batch: Optional[int] = field(default=None, metadata={"help": "Enable ApproxBatchSampler when >0. This caps padded tokens per batch."})
     use_sortish_sampler: bool = field(default=True, metadata={"help": "Whether to use SortishSampler before ApproxBatchSampler packing."})
     sortish_chunk_factor: int = field(default=50, metadata={"help": "Sortish chunk factor. Larger means more sorting, less randomness."})
@@ -165,22 +164,22 @@ def main():
         training_args.run_name = base_run_name
     os.makedirs(task_output_dir, exist_ok=True)
 
-    encoder_config = LongTableEncoder1DConfig(
-        text_dim=text_dim,
-        type_vocab_size=len(type_vocab),
-        max_table_len=data_args.max_table_len,
-        num_classes=4 if is_multiclass_task else 1,
-        problem_type="single_label_classification"
-    )
-
     task_info = get_task_info()[task_name]
     query_key = f"ehrshot:{task_name}"
     query_embeddings, query_dim = build_query_embeddings(
         {query_key: task_info["instruction"]},
         data_args.query_embedding_cache,
-        data_args.query_text_encoder_path,
-        data_args.query_text_encoder_base_model,
+        data_args.query_llm_model_path,
         data_args.query_max_length,
+    )
+
+    encoder_config = LongTableEncoder1DConfig(
+        text_dim=text_dim,
+        type_vocab_size=len(type_vocab),
+        max_table_len=data_args.max_table_len,
+        dim_out=query_dim,
+        num_classes=4 if is_multiclass_task else 1,
+        problem_type="single_label_classification"
     )
 
     model = TaskQueryClassificationModel(

@@ -8,7 +8,6 @@ from typing import Optional
 from peft import LoraConfig, get_peft_model
 from transformers import Trainer, TrainingArguments, HfArgumentParser, set_seed, EarlyStoppingCallback
 from transformers.utils import logging as hf_logging
-from torch.utils.data import Dataset
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -69,21 +68,6 @@ ALL_RISK_PREDICTION_TASKS = [
 
 LABEL_MAP = {"yes": 1, "no": 0}
 
-
-class LabelFieldAdapter(Dataset):
-    def __init__(self, base_dataset):
-        self.base_dataset = base_dataset
-
-    def __len__(self):
-        return len(self.base_dataset)
-
-    def __getitem__(self, index):
-        sample = dict(self.base_dataset[index])
-        label = sample["label"].strip().strip('"').strip("'").lower()
-        label = LABEL_MAP[label]
-        sample["label"] = label
-        return sample
-
 @dataclass
 class ModelArguments:
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to pre-trained model checkpoint"})
@@ -100,7 +84,7 @@ class ModelArguments:
 class DataArguments:
     max_table_len: int = field(metadata={"help": "Keep only the most recent N table rows before encoding"})
     data_dir: str = field(
-        default="/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular",
+        default="/data/zikun_workspace/mimic-iv-3.1_tabular",
         metadata={"help": "Root directory for MIMIC-IV tabular data"}
     )
     task_name: str = field(
@@ -116,17 +100,16 @@ class DataArguments:
         metadata={"help": "Path to val sample-info CSV. If None, uses <data_dir>/task_index/val/<task_name>.csv"}
     )
     embedding_cache: str = field(
-        default="/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular/embeddings/table_text_embeddings.pt",
+        default="/data/zikun_workspace/mimic-iv-3.1_tabular/embeddings/table_text_embeddings.pt",
         metadata={"help": "Path to pre-computed embedding cache"}
     )
     type_vocab_file: str = field(
-        default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/data/type_vocab.json",
+        default="/data/zikun_workspace/code/data/type_vocab.json",
         metadata={"help": "Path to unified type vocabulary JSON file"}
     )
-    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt")
-    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
-    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
-    query_max_length: int = field(default=128)
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt")
+    query_llm_model_path: str = field(default="/data/model_weights_public/BlueZeros/EHR-R1-1.7B")
+    query_max_length: int = field(default=512)
     max_train_samples: Optional[int] = field(default=None, metadata={"help": "Limit training samples"})
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
     lazy_mode: bool = field(default=True, metadata={"help": "Load samples lazily from parquet to save memory"})
@@ -150,19 +133,18 @@ def main():
 
     # Default training settings
     training_args.lr_scheduler_type = "cosine"
-    if training_args.warmup_steps == 0:
-        training_args.warmup_steps = 100
+    training_args.warmup_steps = 10
     training_args.warmup_ratio = 0.0
     training_args.weight_decay = 0.01
     training_args.eval_strategy = "steps"
-    training_args.eval_steps = 100
+    training_args.eval_steps = 10
     training_args.logging_strategy = "steps"
     training_args.logging_steps = 10
     training_args.save_strategy = "steps"
     training_args.save_steps = 100
-    training_args.save_total_limit = 2
+    training_args.save_total_limit = 1
     training_args.bf16 = True
-    training_args.dataloader_num_workers = 4
+    training_args.dataloader_num_workers = 32
     training_args.remove_unused_columns = False
     training_args.report_to = ["wandb"]
     training_args.save_safetensors = True
@@ -215,7 +197,6 @@ def main():
         shuffle=True,
         max_samples=data_args.max_train_samples,
     )
-    train_dataset = LabelFieldAdapter(train_dataset)
     
     val_dataset = MIMICIV(
         root_dir=data_args.data_dir,
@@ -225,28 +206,27 @@ def main():
         shuffle=False,
         max_samples=data_args.max_eval_samples,
     )
-    val_dataset = LabelFieldAdapter(val_dataset)
     
     rank0_print(f"Train dataset size: {len(train_dataset)}")
     rank0_print(f"Val dataset size: {len(val_dataset)}")
-
-    # 5. Model Config — binary classification with BCEWithLogitsLoss
-    encoder_config = LongTableEncoder1DConfig(
-        text_dim=text_dim,
-        type_vocab_size=len(type_vocab),
-        max_table_len=data_args.max_table_len,
-        num_classes=1,                       # Single binary output
-        problem_type="single_label_classification"  # triggers BCEWithLogitsLoss via num_classes=1
-    )
 
     task_info = get_task_info()[data_args.task_name]
     query_key = f"ehr_bench:{data_args.task_name}"
     query_embeddings, query_dim = build_query_embeddings(
         {query_key: task_info["instruction"]},
         data_args.query_embedding_cache,
-        data_args.query_text_encoder_path,
-        data_args.query_text_encoder_base_model,
+        data_args.query_llm_model_path,
         data_args.query_max_length,
+    )
+
+    # 5. Model Config — binary classification with BCEWithLogitsLoss
+    encoder_config = LongTableEncoder1DConfig(
+        text_dim=text_dim,
+        type_vocab_size=len(type_vocab),
+        max_table_len=data_args.max_table_len,
+        dim_out=query_dim,
+        num_classes=1,                       # Single binary output
+        problem_type="single_label_classification"  # triggers BCEWithLogitsLoss via num_classes=1
     )
 
     model = TaskQueryClassificationModel(

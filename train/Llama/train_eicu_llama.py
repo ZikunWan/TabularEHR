@@ -17,7 +17,7 @@ if PROJECT_ROOT not in sys.path:
 
 from dataset.eicu.eicu_dataset import EICUDataset
 from dataset.eicu.task_info import get_task_info
-from train.MEDS_encoder.train_ehrshot_llama import (
+from train.Llama.train_ehrshot_llama import (
     HeadOnlySequenceClassificationTrainer,
     LlamaMEDSClassifier,
     _copy_tokenizer_config_to_output,
@@ -33,12 +33,10 @@ def _normalize_label(raw_label) -> str:
     while len(label) >= 2 and label[0] == label[-1] and label[0] in {"'", '"'}:
         label = label[1:-1].strip()
 
-    try:
+    if label.replace(".", "", 1).isdigit():
         numeric = float(label)
         if numeric.is_integer():
             label = str(int(numeric))
-    except Exception:
-        pass
 
     lowered = label.lower()
     if lowered in {"yes", "y", "true"}:
@@ -87,8 +85,6 @@ def _build_label_metadata(task_name: str):
     # eICU multiclass labels are typically materialized as category ids (0..N-1).
     if task_type == "multi_class_classification":
         candidates = [str(index) for index in range(int(task_info["num_classes"]))]
-    elif "candidate" in task_info:
-        candidates = [str(candidate) for candidate in task_info["candidate"]]
     elif task_type == "binary_classification":
         candidates = ["0", "1"]
     else:
@@ -154,13 +150,12 @@ class EICUMEDSDataCollator:
 
 @dataclass
 class ModelArguments:
+    tokenizer_config_path: str = field(
+        metadata={"help": "Path to tokenizer_config.json or directory containing it."},
+    )
     model_name_or_path: str = field(
         default="/data/model_weights_public/StanfordShahLab/llama-base-4096-clmbr",
         metadata={"help": "Path to StanfordShahLab llama-base-4096-clmbr weights."},
-    )
-    tokenizer_config_path: Optional[str] = field(
-        default=None,
-        metadata={"help": "Optional tokenizer_config.json path (or directory containing it)."},
     )
     freeze_encoder: bool = field(
         default=True,
@@ -255,18 +250,12 @@ def main():
 
     train_info_path = data_args.train_info_path
     val_info_path = data_args.val_info_path
-    if not os.path.isfile(train_info_path):
-        raise FileNotFoundError(f"Training sample_info JSON not found: {train_info_path}")
 
     training_args.remove_unused_columns = False
     training_args.save_safetensors = True
-    training_args.seed = getattr(training_args, "seed", 42) or 42
     training_args.bf16 = True
     training_args.fp16 = False
     set_seed(training_args.seed)
-
-    if training_args.eval_strategy != "no" and not os.path.isfile(val_info_path):
-        raise FileNotFoundError(f"Validation sample_info JSON not found: {val_info_path}")
 
     if (not model_args.freeze_encoder) and (not model_args.use_peft):
         raise ValueError(
@@ -287,7 +276,7 @@ def main():
     training_args.load_best_model_at_end = True
 
     candidates, label_to_id, id_to_label = _build_label_metadata(data_args.task_name)
-    tokenizer_source = model_args.tokenizer_config_path or model_args.model_name_or_path
+    tokenizer_source = model_args.tokenizer_config_path
     tokenizer = _load_clmbr_tokenizer(tokenizer_source)
 
     rank0_print("=" * 80)
@@ -340,7 +329,7 @@ def main():
             )
     rank0_print(f"Trainable parameter tensors: {len(trainable_parameters)}")
     rank0_print(
-        f"Trainable parameter names: {', '.join(trainable_parameters) if trainable_parameters else 'None'}"
+        f"Trainable parameter names: {', '.join(trainable_parameters)}"
     )
 
     train_dataset = _load_source_dataset(
@@ -352,16 +341,14 @@ def main():
     )
     rank0_print(f"Final train dataset size: {len(train_dataset)}")
 
-    eval_dataset = None
-    if training_args.eval_strategy != "no":
-        eval_dataset = _load_source_dataset(
-            data_args=data_args,
-            sample_info_path=val_info_path,
-            split_name="validation",
-            shuffle=False,
-            max_samples=data_args.max_eval_samples,
-        )
-        rank0_print(f"Final validation dataset size: {len(eval_dataset)}")
+    eval_dataset = _load_source_dataset(
+        data_args=data_args,
+        sample_info_path=val_info_path,
+        split_name="validation",
+        shuffle=False,
+        max_samples=data_args.max_eval_samples,
+    )
+    rank0_print(f"Final validation dataset size: {len(eval_dataset)}")
 
     data_collator = EICUMEDSDataCollator(
         tokenizer=tokenizer,
@@ -376,7 +363,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        compute_metrics=compute_classification_metrics if eval_dataset is not None else None,
+        compute_metrics=compute_classification_metrics,
         callbacks=[
             EarlyStoppingCallback(
                 early_stopping_patience=model_args.early_stopping_patience,

@@ -80,17 +80,16 @@ class DataArguments:
         metadata={"help": "Task name (e.g., mortality, readmission, los_3day, creatinine, diagnosis)"}
     )
     embedding_cache: str = field(
-        default="/home/ma-user/sfs_turbo/sai6/zkwan/.cache/embeddings/eicu/text_embeddings.pt",
+        default="/data/zikun_workspace/.cache/embeddings/eicu/text_embeddings.pt",
         metadata={"help": "Path to pre-computed embedding cache"}
     )
     type_vocab_file: str = field(
         default="/data/zikun_workspace/code/data/type_vocab.json",
         metadata={"help": "Path to unified type vocabulary JSON file"}
     )
-    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt")
-    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
-    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
-    query_max_length: int = field(default=128)
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt")
+    query_llm_model_path: str = field(default="/data/model_weights_public/BlueZeros/EHR-R1-1.7B")
+    query_max_length: int = field(default=512)
     max_train_samples: Optional[int] = field(default=None, metadata={"help": "Limit training samples"})
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
     lazy_mode: bool = field(default=True, metadata={"help": "Load samples lazily"})
@@ -210,22 +209,22 @@ def main():
     rank0_print(f"Task type: {task_type}")
     rank0_print(f"Num classes: {num_classes}, Problem type: {problem_type}")
 
+    query_key = f"eicu:{data_args.task_name}"
+    query_embeddings, query_dim = build_query_embeddings(
+        {query_key: task_info["instruction"]},
+        data_args.query_embedding_cache,
+        data_args.query_llm_model_path,
+        data_args.query_max_length,
+    )
+
     # 4. Model Config
     encoder_config = LongTableEncoder1DConfig(
         text_dim=text_dim,
         type_vocab_size=len(type_vocab),
         max_table_len=data_args.max_table_len,
+        dim_out=query_dim,
         num_classes=num_classes,
         problem_type=problem_type
-    )
-
-    query_key = f"eicu:{data_args.task_name}"
-    query_embeddings, query_dim = build_query_embeddings(
-        {query_key: task_info["instruction"]},
-        data_args.query_embedding_cache,
-        data_args.query_text_encoder_path,
-        data_args.query_text_encoder_base_model,
-        data_args.query_max_length,
     )
 
     model = TaskQueryClassificationModel(

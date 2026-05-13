@@ -5,6 +5,7 @@ import torch.nn as nn
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import SequenceClassifierOutput
 
+from .adapter import QFormerAdapter
 from .config import LongTableEncoder1DConfig
 from .encoder import LongTableEncoder1D
 
@@ -12,20 +13,19 @@ from .encoder import LongTableEncoder1D
 class QueryCrossAttentionHead(nn.Module):
     def __init__(self, config: LongTableEncoder1DConfig, query_dim: int):
         super().__init__()
-        self.query_proj = nn.Linear(query_dim, config.dim)
         self.cross_attn = nn.MultiheadAttention(
-            embed_dim=config.dim,
-            num_heads=config.heads,
+            embed_dim=query_dim,
+            num_heads=query_dim // config.dim_head,
             dropout=config.dropout,
             batch_first=True,
         )
-        self.norm1 = nn.LayerNorm(config.dim)
+        self.norm1 = nn.LayerNorm(query_dim)
         self.ffn = nn.Sequential(
-            nn.Linear(config.dim, config.mlp_dim),
+            nn.Linear(query_dim, config.mlp_dim),
             nn.GELU(),
-            nn.Linear(config.mlp_dim, config.dim),
+            nn.Linear(config.mlp_dim, query_dim),
         )
-        self.norm2 = nn.LayerNorm(config.dim)
+        self.norm2 = nn.LayerNorm(query_dim)
 
     def forward(
         self,
@@ -33,7 +33,7 @@ class QueryCrossAttentionHead(nn.Module):
         hidden_states: torch.Tensor,
         seq_mask: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        query = self.query_proj(query_embeds).unsqueeze(1)
+        query = query_embeds.to(dtype=hidden_states.dtype).unsqueeze(1)
         key_padding_mask = None
         if seq_mask is not None:
             key_padding_mask = ~seq_mask.bool()
@@ -62,11 +62,12 @@ class TaskQueryClassificationModel(PreTrainedModel):
     ):
         super().__init__(config)
         self.encoder = LongTableEncoder1D(config)
+        self.adapter = QFormerAdapter(config)
         self.text_embedding = nn.Embedding.from_pretrained(embedding_matrix, freeze=True)
         self.query_head = QueryCrossAttentionHead(config, query_dim=query_dim)
         self.num_classes = config.num_classes
         self.problem_type = config.problem_type
-        self.classifier = nn.Linear(config.dim, self.num_classes)
+        self.classifier = nn.Linear(query_dim, self.num_classes)
         self.post_init()
 
     def _init_weights(self, module):
@@ -109,7 +110,8 @@ class TaskQueryClassificationModel(PreTrainedModel):
             type_ids=type_ids,
             return_mask=True,
         )
-        pooled = self.query_head(query_embeds, hidden_states, hidden_mask)
+        hidden_states = self.adapter(hidden_states, hidden_mask)
+        pooled = self.query_head(query_embeds, hidden_states, None)
         logits = self.classifier(pooled)
         if self.problem_type == "multi_label_classification" and hasattr(self.config, "num_points") and hasattr(self.config, "num_metrics"):
             logits = logits.view(-1, self.config.num_points, self.config.num_metrics)

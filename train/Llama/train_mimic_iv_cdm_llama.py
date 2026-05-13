@@ -16,7 +16,7 @@ if PROJECT_ROOT not in sys.path:
 
 from dataset.mimic_iv_cdm.mimic_iv_cdm_dataset import MIMICIVCDM
 from dataset.mimic_iv_cdm.task_info import get_task_info
-from train.MEDS_encoder.train_ehrshot_llama import (
+from train.Llama.train_ehrshot_llama import (
     HeadOnlySequenceClassificationTrainer,
     LlamaMEDSClassifier,
     _copy_tokenizer_config_to_output,
@@ -107,13 +107,12 @@ class MIMICIVCDMMEDSDataCollator:
 
 @dataclass
 class ModelArguments:
+    tokenizer_config_path: str = field(
+        metadata={"help": "Path to tokenizer_config.json or directory containing it."},
+    )
     model_name_or_path: str = field(
         default="/data/model_weights_public/StanfordShahLab/llama-base-4096-clmbr",
         metadata={"help": "Path to StanfordShahLab llama-base-4096-clmbr weights."},
-    )
-    tokenizer_config_path: Optional[str] = field(
-        default=None,
-        metadata={"help": "Optional tokenizer_config.json path (or directory containing it)."},
     )
     freeze_encoder: bool = field(
         default=True,
@@ -181,7 +180,6 @@ def main():
 
     training_args.remove_unused_columns = False
     training_args.save_safetensors = True
-    training_args.seed = getattr(training_args, "seed", 42) or 42
     training_args.bf16 = True
     training_args.fp16 = False
     set_seed(training_args.seed)
@@ -200,7 +198,7 @@ def main():
     training_args.load_best_model_at_end = False
 
     candidates, label_to_id, id_to_label = _build_label_metadata(data_args.task_name)
-    tokenizer_source = model_args.tokenizer_config_path or model_args.model_name_or_path
+    tokenizer_source = model_args.tokenizer_config_path
     tokenizer = _load_clmbr_tokenizer(tokenizer_source)
 
     rank0_print("=" * 80)
@@ -212,7 +210,7 @@ def main():
     rank0_print(f"Task: {data_args.task_name}")
     rank0_print(f"Root dir: {data_args.root_dir}")
     rank0_print(f"Max seq length: {data_args.max_seq_length}")
-    rank0_print(f"Concept map dir: {data_args.concept_map_dir or '(default under root_dir)'}")
+    rank0_print(f"Concept map dir: {data_args.concept_map_dir}")
     rank0_print(f"Freeze encoder: {model_args.freeze_encoder}")
     rank0_print(f"Use PEFT: {model_args.use_peft}")
     if model_args.use_peft:
@@ -250,7 +248,7 @@ def main():
                 f"but found non-classifier trainable parameters: {invalid_trainable[:5]}"
             )
     rank0_print(f"Trainable parameter tensors: {len(trainable_parameters)}")
-    rank0_print(f"Trainable parameter names: {', '.join(trainable_parameters) if trainable_parameters else 'None'}")
+    rank0_print(f"Trainable parameter names: {', '.join(trainable_parameters)}")
 
     train_dataset = _load_source_dataset(
         data_args=data_args,

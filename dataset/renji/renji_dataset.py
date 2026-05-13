@@ -13,31 +13,53 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from dataset.renji.task_info import ALL_METRICS as TASK_ALL_METRICS, ALL_POINTS as TASK_ALL_POINTS, PREDICTION_POINTS as TASK_PREDICTION_POINTS, get_task_info
+from dataset.renji.task_info import get_task_info
 
 
 class RenjiDataset(Dataset):
     """
     Renji Pediatric Liver Transplant Dataset.
     
-    Predicts outcomes at 6 fixed time points per patient:
-    - Day 14: Predict 2w-1m labels
-    - Day 30: Predict 2m-6m labels
-    - Day 180: Predict 7m-12m labels
-    - Day 365: Predict 13m-14m labels
-    - Day 395: Predict 15m-24m labels
-    - Day 730: Predict 2y+ labels
+    Predicts outcomes at 4 fixed time points per patient:
+    - Day 0: Predict 0-30d labels
+    - Day 30: Predict 30-180d labels
+    - Day 180: Predict 180-365d labels
+    - Day 365: Predict 365d+ labels
     """
     
     # Prediction points: (cutoff_day, label_prefix, readable_name)
-    # Note: the 0-2w window was removed due to extreme label imbalance.
     PREDICTION_POINTS = {
-        'day14': (14, '2w-1m', 'Day 14'),
-        'day30': (30, '2m-6m', 'Day 30'),
-        'day180': (180, '7m-12m', 'Day 180'),
-        'day365': (365, '13m-14m', 'Day 365'),
-        'day395': (395, '15m-24m', 'Day 395'),
-        'day730': (730, '2y+', 'Day 730')
+        'day0': (0, '0-30d', 'Day 0'),
+        'day30': (30, '30-180d', 'Day 30'),
+        'day180': (180, '180-365d', 'Day 180'),
+        'day365': (365, '365d+', 'Day 365'),
+    }
+
+    DRUG_CONC_MED_COLS = {
+        'Tacrolimus_Conc': ['Tacrolimus_ER', 'Tacrolimus_Saifukai', 'Tacrolimus_Prograf'],
+        'CsA_Trough': ['Cyclosporine', 'Sandimmun'],
+        'CsA_Peak': ['Cyclosporine', 'Sandimmun'],
+    }
+
+    DRUG_CONC_RANGES = {
+        'Tacrolimus_Conc': [
+            (0, 30, 8.0, 12.0),
+            (31, 180, 7.0, 10.0),
+            (181, 365, 5.0, 8.0),
+            (366, float('inf'), 4.0, 6.0),
+        ],
+        'CsA_Trough': [
+            (0, 30, 150.0, 200.0),
+            (31, 180, 120.0, 150.0),
+            (181, 365, 100.0, 120.0),
+            (366, float('inf'), 80.0, 120.0),
+        ],
+        'CsA_Peak': [
+            (0, 30, 1000.0, 1200.0),
+            (31, 180, 800.0, 1000.0),
+            (181, 365, 500.0, 800.0),
+            (366, float('inf'), 400.0, 600.0),
+        ],
     }
     
     # Static features from patient info: {column_name: readable_name}
@@ -66,11 +88,11 @@ class RenjiDataset(Dataset):
     ])
     
     # Combined list of all prediction points (sorted by day)
-    ALL_POINTS = ['day14', 'day30', 'day180', 'day365', 'day395', 'day730']
+    ALL_POINTS = ['day0', 'day30', 'day180', 'day365']
     TASK_INFO = get_task_info()
-    TASK_ALL_METRICS = TASK_ALL_METRICS
-    TASK_ALL_POINTS = TASK_ALL_POINTS
-    TASK_PREDICTION_POINTS = TASK_PREDICTION_POINTS
+    TASK_ALL_METRICS = ALL_METRICS
+    TASK_ALL_POINTS = ALL_POINTS
+    TASK_PREDICTION_POINTS = PREDICTION_POINTS
 
     def __init__(self, 
                  root_dir, 
@@ -80,7 +102,8 @@ class RenjiDataset(Dataset):
                  target_metrics=None,
                  target_prediction_points=None,
                  shuffle=False,
-                 task_mode='single' # 'single' or 'multi_task'
+                 task_mode='single', # 'single' or 'multi_task'
+                 return_meds=False,
                  ):
         """
         Initialize RenjiDataset.
@@ -93,10 +116,11 @@ class RenjiDataset(Dataset):
             target_metrics: List of metric names to filter (e.g., ['ALT', 'AST', 'TB'])
                           If None, use all metrics
             target_prediction_points: List of prediction point keys to filter
-                          (e.g., ['day14', 'day365', 'day730']). If None, use all.
+                          (e.g., ['day0', 'day30', 'day180', 'day365']). If None, use all.
             shuffle: Whether to shuffle the dataset
             task_mode: 'single' for one sample per (patient, point, metric),
                        'multi_task' for one sample per (patient, point) with matrix label.
+            return_meds: Whether to include MEDS-format inputs.
         """
         self.root_dir = root_dir
         self.split = split
@@ -108,6 +132,7 @@ class RenjiDataset(Dataset):
         self.target_prediction_points = target_prediction_points
         self.shuffle = shuffle
         self.task_mode = task_mode
+        self.return_meds = return_meds
         self.task_schema = get_task_info()
         
         if self.table_mode in {'table_only', 'table_plus_rest_text'}:
@@ -226,7 +251,7 @@ class RenjiDataset(Dataset):
             }
         }
 
-        self.med_cols_en = {self.ZH_TO_EN.get(c, c) for c in self.MED_COLS_ZH}
+        self.med_cols_en = {self.ZH_TO_EN[c] for c in self.MED_COLS_ZH}
 
         # Medication metadata
         self.MED_META = {
@@ -453,15 +478,15 @@ class RenjiDataset(Dataset):
                               "LONIC": "Ammonia [Moles/volume] in Plasma",
                               "MEDS_CODE": "LOINC/16362-6"},
             'Tacrolimus_Conc': {'unit': 'ng/mL',
-                                'ranges': [(0, 99, None, 0, 30)],
+                                'ranges': [],
                                 "LONIC": "Tacrolimus [Mass/volume] in Serum or Plasma",
                                 "MEDS_CODE": "LOINC/32721-3"},
             'CsA_Trough': {'unit': 'ng/mL',
-                           'ranges': [(0, 99, None, 100, 400)],
+                           'ranges': [],
                            "LONIC": "cycloSPORINE [Mass/volume] in Blood",
                            "MEDS_CODE": "LOINC/3520-4"},
             'CsA_Peak': {'unit': 'ng/mL',
-                         'ranges': [(0, 99, None, 400, 1600)],
+                         'ranges': [],
                          "LONIC": "cycloSPORINE [Mass/volume] in Blood --2 hours post dose",
                          "MEDS_CODE": "LOINC/32997-9"},
             'Rapa_Conc': {'unit': 'ng/mL',
@@ -500,7 +525,7 @@ class RenjiDataset(Dataset):
                       "MEDS_CODE": "LOINC/13952-7"},
         }
 
-    def _get_reference_range(self, lab_item, age_years, gender=None):
+    def _get_reference_range(self, lab_item, age_years, gender=None, postop_day=None, first_drug_days=None):
         """
         Get reference range for a lab item based on age and gender.
         
@@ -512,11 +537,14 @@ class RenjiDataset(Dataset):
         Returns:
             (low, high, unit, range_str) or (None, None, unit, '-') if not found
         """
-        if lab_item not in self.LAB_META:
-            return None, None, '-', '-'
-        
         meta = self.LAB_META[lab_item]
         unit = meta['unit']
+
+        if lab_item in self.DRUG_CONC_RANGES:
+            return self._get_drug_concentration_reference_range(
+                lab_item, unit, postop_day, first_drug_days
+            )
+
         ranges = meta['ranges']
         
         # Find matching range
@@ -527,19 +555,58 @@ class RenjiDataset(Dataset):
                     range_str = f"{low} - {high}" if high != float('inf') else f"> {low}"
                     return low, high, unit, range_str
         
-        # No exact match, try to find any range without gender restriction
         for age_min, age_max, range_gender, low, high in ranges:
             if age_min <= age_years < age_max and range_gender is None:
                 range_str = f"{low} - {high}" if high != float('inf') else f"> {low}"
                 return low, high, unit, range_str
-        
-        # Fallback: use last range as default
-        if ranges:
-            _, _, _, low, high = ranges[-1]
-            range_str = f"{low} - {high}" if high != float('inf') else f"> {low}"
-            return low, high, unit, range_str
-        
-        return None, None, unit, '-'
+
+        raise ValueError(f"No reference range for {lab_item} at age={age_years}, gender={gender}")
+
+    def _numeric_values(self, value):
+        value_str = str(value).strip()
+        return [float(x) for x in re.findall(r'\d+(?:\.\d+)?', value_str)]
+
+    def _postop_day_value(self, value):
+        value_str = str(value).strip()
+        if not value_str:
+            raise ValueError("Empty postoperative day value")
+        match = re.search(r'-?\d+(?:\.\d+)?', value_str)
+        if match is None:
+            raise ValueError(f"No numeric postoperative day in value: {value}")
+        return float(match.group(0))
+
+    def _get_first_drug_days(self, df_followup):
+        first_drug_days = {}
+        for lab_item, med_cols in self.DRUG_CONC_MED_COLS.items():
+            first_day = None
+            for _, row in df_followup.iterrows():
+                day = self._postop_day_value(row['术后天数'])
+
+                has_drug = any(
+                    any(v > 0 for v in self._numeric_values(row[med_col]))
+                    for med_col in med_cols
+                    if med_col in df_followup.columns
+                )
+                if has_drug:
+                    first_day = day
+                    break
+
+            first_drug_days[lab_item] = first_day
+
+        return first_drug_days
+
+    def _get_drug_concentration_reference_range(self, lab_item, unit, postop_day, first_drug_days):
+        first_day = first_drug_days.get(lab_item)
+        current_day = self._postop_day_value(postop_day)
+        if first_day is None:
+            raise ValueError(f"No first drug day for {lab_item}")
+
+        elapsed_days = current_day - first_day
+        for day_min, day_max, low, high in self.DRUG_CONC_RANGES[lab_item]:
+            if day_min <= elapsed_days <= day_max:
+                return low, high, unit, f"{low} - {high}"
+
+        raise ValueError(f"No drug concentration range for {lab_item} at elapsed_days={elapsed_days}")
 
     def _get_severity_flag(self, lab_item, value, age_years, gender=None):
         """
@@ -549,18 +616,12 @@ class RenjiDataset(Dataset):
             A severity label such as "Normal", "Elevated", or "Very High",
             or None if no matching severity band is defined.
         """
-        if lab_item not in self.LAB_META:
-            return None
-
         meta = self.LAB_META[lab_item]
         severity_bands = meta.get('severity_bands')
         if not severity_bands:
             return None
 
-        try:
-            numeric_value = float(value)
-        except Exception:
-            return None
+        numeric_value = float(value)
 
         for band in severity_bands:
             band_range = band.get('range')
@@ -597,22 +658,17 @@ class RenjiDataset(Dataset):
             return [value_str]
 
         def _is_meaningful_part(part):
-            part_lower = part.lower()
-            if part in {"阴性", "阳性"} or part_lower in {"negative", "positive", "normal", "abnormal"}:
+            if part in {"阴性", "阳性"}:
                 return True
             if "<" in part or ">" in part:
                 return True
-            try:
-                float(part)
-                return True
-            except Exception:
-                return False
+            return re.fullmatch(r'\d+(?:\.\d+)?', part) is not None
 
         if all(_is_meaningful_part(part) for part in raw_parts):
             return raw_parts
         return [value_str]
 
-    def _describe_lab_value(self, lab_item, value, age_years, gender=None):
+    def _describe_lab_value(self, lab_item, value, age_years, gender=None, postop_day=None, first_drug_days=None):
         """
         Build display-facing lab value information for text/table rendering.
 
@@ -620,14 +676,17 @@ class RenjiDataset(Dataset):
             dict with keys: value, unit, flag, low_str, high_str
         """
         low_limit, high_limit, unit, _ = self._get_reference_range(
-            lab_item, age_years if age_years else 5.0, gender
+            lab_item,
+            age_years,
+            gender,
+            postop_day=postop_day,
+            first_drug_days=first_drug_days,
         )
         low_str = str(low_limit) if low_limit is not None else "-"
         high_str = str(high_limit) if high_limit is not None and high_limit != float('inf') else "-"
 
         raw_value = str(value).strip()
         raw_lower = raw_value.lower()
-        flag = "Unknown"
         display_value = raw_value
         display_unit = unit
 
@@ -667,20 +726,17 @@ class RenjiDataset(Dataset):
                 "high_str": high_str,
             }
 
-        try:
-            numeric_value = float(raw_value)
-            severity_flag = self._get_severity_flag(
-                lab_item,
-                numeric_value,
-                age_years if age_years else 5.0,
-                gender,
-            )
-            if severity_flag is not None:
-                flag = severity_flag
-            elif low_limit is not None and high_limit is not None:
-                flag = "Abnormal" if (numeric_value < low_limit or numeric_value > high_limit) else "Normal"
-        except Exception:
-            pass
+        numeric_value = float(raw_value)
+        severity_flag = self._get_severity_flag(
+            lab_item,
+            numeric_value,
+            age_years,
+            gender,
+        )
+        if severity_flag is not None:
+            flag = severity_flag
+        else:
+            flag = "Abnormal" if (numeric_value < low_limit or numeric_value > high_limit) else "Normal"
 
         return {
             "value": display_value,
@@ -691,60 +747,30 @@ class RenjiDataset(Dataset):
         }
 
     def _load_auxiliary_data(self):
-        """Load labels, patient info, and pathology data."""
-        
-        # Load labels.csv
+        """Load labels and patient info."""
         labels_path = os.path.join(self.root_dir, 'labels.csv')
-        if os.path.exists(labels_path):
-            self.labels_df = pd.read_csv(labels_path, encoding='utf-8-sig')
-            
-            # Translate Chinese column names to English
-            # Column format: "{window}_{metric}" e.g. "2w-1m_胆汁酸" -> "2w-1m_Bile_Acid"
-            new_columns = {}
-            for col in self.labels_df.columns:
-                if '_' in col and col != 'filename':
-                    parts = col.split('_', 1)
-                    if len(parts) == 2:
-                        window, metric = parts
-                        metric_en = self.ZH_TO_EN.get(metric, metric)
-                        new_columns[col] = f"{window}_{metric_en}"
-            if new_columns:
-                self.labels_df.rename(columns=new_columns, inplace=True)
-            
-            if 'filename' in self.labels_df.columns:
-                self.labels_df.set_index('filename', inplace=True)
-        else:
-            self.labels_df = None
-            print(f"Warning: labels.csv not found at {labels_path}")
-        
-        # Load patient info
-        patient_info_path = os.path.join(self.root_dir, '患儿基本信息总表251023_含免疫事件.xlsx')
-        if os.path.exists(patient_info_path):
-            self.patient_info_df = pd.read_excel(patient_info_path)
-            # Build lookup map: transplant_id without "_1" suffix -> row
-            self.patient_info_map = {}
-            for _, row in self.patient_info_df.iterrows():
-                tid = str(row.get('transplant_id', ''))
-                # Remove trailing "_1", "_2" etc.
-                key = re.sub(r'_\d+$', '', tid)
-                if key:
-                    self.patient_info_map[key] = row
-            print(f"Loaded patient info: {len(self.patient_info_map)} patients")
-        else:
-            self.patient_info_df = None
-            self.patient_info_map = {}
-            print(f"Warning: patient info not found at {patient_info_path}")
-        
-        # Load liver pathology (placeholder - matching not yet implemented)
-        pathology_path = os.path.join(self.root_dir, '肝脏病理.xlsx')
-        if os.path.exists(pathology_path):
-            self.pathology_df = pd.read_excel(pathology_path)
-            # TODO: Implement matching strategy when available
-            self.pathology_map = {}  # Placeholder
-            print(f"Loaded pathology: {self.pathology_df.shape} (matching not implemented)")
-        else:
-            self.pathology_df = None
-            self.pathology_map = {}
+        self.labels_df = pd.read_csv(labels_path, encoding='utf-8-sig')
+
+        # Translate Chinese column names to English
+        # Column format: "{window}_{metric}" e.g. "0-30d_胆汁酸" -> "0-30d_Bile_Acid"
+        new_columns = {}
+        for col in self.labels_df.columns:
+            if '_' in col and col != 'filename':
+                parts = col.split('_', 1)
+                if len(parts) == 2:
+                    window, metric = parts
+                    metric_en = self.ZH_TO_EN[metric]
+                    new_columns[col] = f"{window}_{metric_en}"
+        self.labels_df.rename(columns=new_columns, inplace=True)
+        self.labels_df.set_index('filename', inplace=True)
+
+        patient_info_path = os.path.join(self.root_dir, '患儿基本信息总表251023_含免疫事件.csv')
+        self.patient_info_df = pd.read_csv(patient_info_path, encoding='utf-8-sig')
+        self.patient_info_map = {}
+        for _, row in self.patient_info_df.iterrows():
+            key = os.path.splitext(str(row['file_name']))[0]
+            self.patient_info_map[key] = row
+        print(f"Loaded patient info: {len(self.patient_info_map)} patients")
 
     def _build_index(self):
         """
@@ -752,10 +778,6 @@ class RenjiDataset(Dataset):
         - 'single': One sample per (patient, prediction_point, metric)
         - 'multi_task': One sample per (patient, prediction_point)
         """
-        if self.labels_df is None:
-            print("[WARNING] No labels loaded, returning empty samples")
-            return []
-        
         print(f"[{self.split}] Building sample index (mode={self.task_mode})...")
         
         # Determine which prediction points to use
@@ -779,17 +801,10 @@ class RenjiDataset(Dataset):
             # Get filename without extension
             fname_key = os.path.splitext(fname)[0] if fname.endswith(('.xlsx')) else fname
             
-            # Check if labels exist for this patient
-            if fname_key not in self.labels_df.index:
-                continue
-            
             patient_labels = self.labels_df.loc[fname_key]
             
             # For each prediction point
             for point_key in active_points:
-                if point_key not in self.PREDICTION_POINTS:
-                    continue
-                    
                 cutoff_day, label_prefix, readable_point = self.PREDICTION_POINTS[point_key]
                 
                 if self.task_mode == 'multi_label' or self.task_mode == 'multi_task':
@@ -946,48 +961,13 @@ class RenjiDataset(Dataset):
         """Load and filter follow-up data for a sample."""
         fname = sample['fname']
         cutoff_day = sample['cutoff_day']
-        
-        # Determine file path and extension
-        fpath = os.path.join(self.followup_dir, fname)
-        ext = os.path.splitext(fname)[1]
-        
-        if not os.path.exists(fpath):
-            # Try finding with extensions if exact match fails
-            # Prioritize CSV
-            for e in ['.csv', '.xlsx', '.xls']:
-                alt_path = os.path.join(self.followup_dir, sample['fname_key'] + e)
-                if os.path.exists(alt_path):
-                    fpath = alt_path
-                    ext = e
-                    break
-        
-        # Load based on extension
-        if ext.lower() == '.csv':
-            df = pd.read_csv(fpath)
-        else:
-            df = pd.read_excel(fpath)
-        
-        # Sort by report date
-        if '报告日期' in df.columns:
-            df['报告日期'] = pd.to_datetime(df['报告日期'], errors='coerce')
-            df = df.sort_values('报告日期').reset_index(drop=True)
-        
-        # Filter by 术后天数
-        if '术后天数' in df.columns:
-            if cutoff_day == 0:
-                # Day 0: Use first record or pre-surgery records (术后天数 <= 0)
-                mask = df['术后天数'] <= 0
-                if mask.sum() == 0:
-                    # No pre-surgery records, use first row
-                    df_filtered = df.iloc[:1].copy()
-                else:
-                    df_filtered = df[mask].copy()
-            else:
-                # Filter records up to cutoff_day
-                df_filtered = df[df['术后天数'] <= cutoff_day].copy()
-        else:
-            # No 术后天数 column, use all data
-            df_filtered = df.copy()
+
+        fpath = os.path.join(self.followup_dir, fname if fname.endswith('.csv') else f"{fname}.csv")
+        df = pd.read_csv(fpath, encoding='utf-8-sig')
+        df['报告日期'] = pd.to_datetime(df['报告日期'])
+        df['术后天数'] = pd.to_numeric(df['术后天数'])
+        df = df.sort_values('报告日期').reset_index(drop=True)
+        df_filtered = df[df['术后天数'] <= cutoff_day].copy()
         
         # Remove excluded and label columns
         cols_to_keep = []
@@ -1001,16 +981,16 @@ class RenjiDataset(Dataset):
         df_clean = df_filtered[cols_to_keep].copy()
         
         # Rename columns to English
-        new_columns = [self.ZH_TO_EN.get(c, c) for c in df_clean.columns]
+        new_columns = [
+            c if c in {'报告日期', '术后天数'} else self.ZH_TO_EN[c]
+            for c in df_clean.columns
+        ]
         df_clean.columns = new_columns
         
         return df_clean
 
     def _get_static_features(self, fname_key):
         """Get static patient features as a dict with readable names."""
-        if fname_key not in self.patient_info_map:
-            return {}
-        
         row = self.patient_info_map[fname_key]
         features = {}  # {readable_name: value}
         for col_name, readable_name in self.STATIC_FEATURES.items():
@@ -1018,11 +998,6 @@ class RenjiDataset(Dataset):
             if pd.notna(val):
                 features[readable_name] = val
         return features
-
-    def _get_pathology_data(self, fname_key):
-        """Get pathology data (placeholder - not implemented)."""
-        # TODO: Implement when matching strategy is available
-        return None
 
     def _build_static_table(self, features, surgery_date=None):
         """Convert static features to DataFrame table."""
@@ -1040,7 +1015,7 @@ class RenjiDataset(Dataset):
             if v_str in self.ZH_VALUE_MAP:
                 v_str = self.ZH_VALUE_MAP[v_str]
             
-            item_name = self.STATIC_FEATURES.get(k, k)
+            item_name = k
             unit = "" # Default to empty string instead of "-"
             
             # Handle special static features with units
@@ -1069,7 +1044,7 @@ class RenjiDataset(Dataset):
             if v_str in self.ZH_VALUE_MAP:
                 v_str = self.ZH_VALUE_MAP[v_str]
             
-            item_name = self.STATIC_FEATURES.get(k, k)
+            item_name = k
             unit = "-"
             
             # Handle special static features with units
@@ -1096,9 +1071,11 @@ class RenjiDataset(Dataset):
 
         med_rows = []
         lab_rows = []
+        first_drug_days = self._get_first_drug_days(df_slice)
 
         for _, row in df_slice.iterrows():
             base_time = row.get('报告日期')
+            postop_day = row.get('术后天数')
             for col, val in row.items():
                 if pd.isna(val) or val == '':
                     continue
@@ -1109,12 +1086,12 @@ class RenjiDataset(Dataset):
                 interval_hours = 24.0 / len(value_parts) if len(value_parts) > 1 else 0.0
 
                 for part_idx, part in enumerate(value_parts):
-                    event_time = pd.to_datetime(base_time, errors='coerce')
+                    event_time = pd.to_datetime(base_time)
                     if pd.notna(event_time):
                         event_time = event_time + pd.Timedelta(hours=part_idx * interval_hours)
 
                     if col in self.med_cols_en:
-                        col_meta = self.MED_META.get(col, {'str': 'Unknown', 'unit': 'Unknown', 'MEDS_CODE': ''})
+                        col_meta = self.MED_META[col]
                         med_rows.append(
                             {
                                 "Time": event_time,
@@ -1123,10 +1100,17 @@ class RenjiDataset(Dataset):
                                 "Unit": col_meta['unit'],
                             }
                         )
-                    else:
-                        lab_meta = self.LAB_META.get(col, {})
-                        item_name = lab_meta.get('LONIC', col)
-                        desc = self._describe_lab_value(col, part, age_years, gender)
+                    elif col in self.LAB_META:
+                        lab_meta = self.LAB_META[col]
+                        item_name = lab_meta['LONIC']
+                        desc = self._describe_lab_value(
+                            col,
+                            part,
+                            age_years,
+                            gender,
+                            postop_day=postop_day,
+                            first_drug_days=first_drug_days,
+                        )
                         lab_rows.append(
                             {
                                 "Time": event_time,
@@ -1144,18 +1128,10 @@ class RenjiDataset(Dataset):
             {row["Time"] for row in med_rows + lab_rows if pd.notna(row["Time"])}
         )
 
-        if not all_times and (med_rows or lab_rows):
-            all_times = [pd.NaT]
-
         for current_time in all_times:
-            if pd.isna(current_time):
-                t_str = "Unknown"
-                current_med_rows = [row for row in med_rows if pd.isna(row["Time"])]
-                current_lab_rows = [row for row in lab_rows if pd.isna(row["Time"])]
-            else:
-                t_str = pd.to_datetime(current_time).strftime('%Y-%m-%d %H:%M:%S')
-                current_med_rows = [row for row in med_rows if row["Time"] == current_time]
-                current_lab_rows = [row for row in lab_rows if row["Time"] == current_time]
+            t_str = pd.to_datetime(current_time).strftime('%Y-%m-%d %H:%M:%S')
+            current_med_rows = [row for row in med_rows if row["Time"] == current_time]
+            current_lab_rows = [row for row in lab_rows if row["Time"] == current_time]
 
             day_text = []
             if current_med_rows:
@@ -1194,6 +1170,7 @@ class RenjiDataset(Dataset):
 
     def structed_EHR_input_process(self, static_features, df_followup, surgery_date=None, age_years=None, gender=None):
         measurement_tables = {}
+        first_drug_days = self._get_first_drug_days(df_followup)
 
         static_table = self._build_static_table(static_features, surgery_date)
         if static_table is not None:
@@ -1208,14 +1185,20 @@ class RenjiDataset(Dataset):
                     med_df = med_df.rename(columns={'报告日期': 'Time'})
                     med_df['Category'] = 'drug_exposure'
                     med_df = self._expand_multivalue_rows(med_df)
-                    med_df['Unit'] = med_df['Item'].apply(lambda x: self.MED_META.get(x, {}).get('unit', ''))
-                    med_df['Item'] = med_df['Item'].apply(lambda x: self.MED_META.get(x, {}).get('str', x))
+                    med_df['Unit'] = med_df['Item'].apply(lambda x: self.MED_META[x]['unit'])
+                    med_df['Item'] = med_df['Item'].apply(lambda x: self.MED_META[x]['str'])
                     med_df = med_df[['Time', 'Item', 'Value', 'Unit', 'Category']].sort_values('Time')
                     measurement_tables['medication'] = med_df
 
-            lab_cols = [c for c in df_followup.columns if c not in self.med_cols_en and c != '术后天数']
-            if len(lab_cols) > 1:
-                lab_df = df_followup[lab_cols].melt(id_vars=['报告日期'], var_name='Item', value_name='Value')
+            lab_id_vars = ['报告日期']
+            if '术后天数' in df_followup.columns:
+                lab_id_vars.append('术后天数')
+            lab_value_cols = [
+                c for c in df_followup.columns
+                if c in self.LAB_META
+            ]
+            if lab_value_cols:
+                lab_df = df_followup[lab_id_vars + lab_value_cols].melt(id_vars=lab_id_vars, var_name='Item', value_name='Value')
                 lab_df = lab_df.dropna(subset=['Value'])
                 if len(lab_df) > 0:
                     lab_df = lab_df.rename(columns={'报告日期': 'Time'})
@@ -1228,13 +1211,15 @@ class RenjiDataset(Dataset):
                                 row['Value'],
                                 age_years if age_years else 5.0,
                                 gender,
+                                postop_day=row['术后天数'],
+                                first_drug_days=first_drug_days,
                             )
                         ),
                         axis=1,
                     )
                     lab_df['Value'] = desc_df['value']
                     lab_df['Unit'] = desc_df['unit']
-                    lab_df['Item'] = lab_df['Item'].apply(lambda x: self.LAB_META.get(x, {}).get('LONIC', x))
+                    lab_df['Item'] = lab_df['Item'].apply(lambda x: self.LAB_META[x]['LONIC'])
                     lab_df = lab_df[['Time', 'Item', 'Value', 'Unit', 'Category']].sort_values('Time')
                     measurement_tables['laboratory'] = lab_df
 
@@ -1246,7 +1231,7 @@ class RenjiDataset(Dataset):
 
         if dynamic_dfs:
             final_dynamic = pd.concat(dynamic_dfs, ignore_index=True)
-            final_dynamic['Time'] = pd.to_datetime(final_dynamic['Time'], errors='coerce')
+            final_dynamic['Time'] = pd.to_datetime(final_dynamic['Time'])
             final_dynamic = final_dynamic.sort_values('Time')
         else:
             final_dynamic = pd.DataFrame()
@@ -1260,7 +1245,7 @@ class RenjiDataset(Dataset):
         final_table = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
 
         if not final_table.empty and 'Time' in final_table.columns:
-            sort_keys = pd.to_datetime(final_table['Time'], errors='coerce')
+            sort_keys = pd.to_datetime(final_table['Time'])
             final_table = final_table.loc[sort_keys.sort_values(na_position='first').index].reset_index(drop=True)
 
         return final_table
@@ -1278,7 +1263,7 @@ class RenjiDataset(Dataset):
 
         table = measurement_table.copy()
         if 'Time' in table.columns:
-            table['Time'] = pd.to_datetime(table['Time'], errors='coerce')
+            table['Time'] = pd.to_datetime(table['Time'])
             table['Time'] = table['Time'].dt.strftime('%Y-%m-%d %H:%M:%S')
             table['Time'] = table['Time'].fillna('')
 
@@ -1297,7 +1282,7 @@ class RenjiDataset(Dataset):
                 ]
                 for _, row in sub_df.iterrows():
                     lines.append(
-                        f"| {str(row.get('Item', '')).strip()} | {str(row.get('Value', '')).strip()} | {str(row.get('Unit', '')).strip()} |"
+                        f"| {str(row['Item']).strip()} | {str(row['Value']).strip()} | {str(row['Unit']).strip()} |"
                     )
             else:
                 lines = [
@@ -1307,7 +1292,7 @@ class RenjiDataset(Dataset):
                 ]
                 for _, row in sub_df.iterrows():
                     lines.append(
-                        f"| {str(row.get('Time', '')).strip()} | {str(row.get('Item', '')).strip()} | {str(row.get('Value', '')).strip()} | {str(row.get('Unit', '')).strip()} |"
+                        f"| {str(row['Time']).strip()} | {str(row['Item']).strip()} | {str(row['Value']).strip()} | {str(row['Unit']).strip()} |"
                     )
 
             sections.append("\n".join(lines))
@@ -1322,6 +1307,148 @@ class RenjiDataset(Dataset):
             gender=gender,
         )
 
+    def _normalize_meds_fragment(self, value):
+        value_str = str(value).strip()
+        normalized = []
+        for ch in value_str:
+            if ch.isalnum():
+                normalized.append(ch)
+            else:
+                normalized.append("_")
+        return "_".join(part for part in "".join(normalized).split("_") if part)
+
+    def _meds_value_fields(self, value):
+        value_str = str(value).strip()
+        if re.fullmatch(r'-?\d+(?:\.\d+)?', value_str):
+            return float(value_str), ""
+        if value_str == "阴性":
+            return None, "Normal"
+        if value_str == "阳性":
+            return None, "Abnormal"
+        return None, value_str
+
+    def meds_input_process(self, subject_id, static_features, df_followup, surgery_date):
+        rows = []
+        static_time = pd.to_datetime(surgery_date)
+
+        for feature_name, value in static_features.items():
+            value_str = str(value).strip()
+            if value_str in self.ZH_VALUE_MAP:
+                value_str = self.ZH_VALUE_MAP[value_str]
+
+            item_name = feature_name
+            unit = ""
+            if 'Weight (kg)' in item_name:
+                item_name = item_name.replace(' (kg)', '')
+                unit = 'kg'
+            elif 'Weight (g)' in item_name:
+                item_name = item_name.replace(' (g)', '')
+                unit = 'g'
+
+            numeric_value, text_value = self._meds_value_fields(value_str)
+            code = f"PERSON//{self._normalize_meds_fragment(item_name)}"
+            if text_value:
+                code = f"{code}//{self._normalize_meds_fragment(text_value)}"
+                text_value = ""
+
+            rows.append(
+                {
+                    "subject_id": subject_id,
+                    "time": static_time,
+                    "code": code,
+                    "numeric_value": numeric_value,
+                    "text_value": text_value,
+                    "unit": unit,
+                    "omop_table": "person",
+                }
+            )
+
+        for _, row in df_followup.iterrows():
+            base_time = pd.to_datetime(row['报告日期'])
+
+            for col, val in row.items():
+                if col in {'报告日期', '术后天数'}:
+                    continue
+                if pd.isna(val) or val == '':
+                    continue
+
+                value_parts = self._split_multivalue_parts(val)
+                interval_hours = 24.0 / len(value_parts) if len(value_parts) > 1 else 0.0
+
+                for part_idx, part in enumerate(value_parts):
+                    event_time = base_time + pd.Timedelta(hours=part_idx * interval_hours)
+                    numeric_value, text_value = self._meds_value_fields(part)
+
+                    if col in self.med_cols_en:
+                        meta = self.MED_META[col]
+                        code = meta['MEDS_CODE']
+                        unit = meta['unit']
+                        omop_table = "drug_exposure"
+                    elif col in self.LAB_META:
+                        meta = self.LAB_META[col]
+                        code = meta['MEDS_CODE']
+                        unit = meta['unit']
+                        omop_table = "measurement"
+                    else:
+                        continue
+
+                    rows.append(
+                        {
+                            "subject_id": subject_id,
+                            "time": event_time,
+                            "code": code,
+                            "numeric_value": numeric_value,
+                            "text_value": text_value,
+                            "unit": unit,
+                            "omop_table": omop_table,
+                        }
+                    )
+
+        meds_df = pd.DataFrame(
+            rows,
+            columns=["subject_id", "time", "code", "numeric_value", "text_value", "unit", "omop_table"],
+        )
+        meds_df["time"] = pd.to_datetime(meds_df["time"])
+        meds_df = meds_df.sort_values(by=["time"]).reset_index(drop=True)
+        meds_df["time"] = meds_df["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        meds_events = []
+        for row in meds_df.to_dict(orient="records"):
+            event = {
+                "code": row["code"],
+                "start": row["time"],
+                "end": row["time"],
+            }
+
+            numeric_value = row["numeric_value"]
+            text_value = str(row["text_value"]).strip()
+            if pd.notna(numeric_value):
+                event["value"] = float(numeric_value)
+            elif text_value:
+                event["value"] = text_value
+
+            unit = str(row["unit"]).strip()
+            if unit:
+                event["unit"] = unit
+
+            omop_table = str(row["omop_table"]).strip()
+            if omop_table:
+                event["omop_table"] = omop_table
+
+            meds_events.append(event)
+
+        from hf_ehr.config import Event
+
+        hf_ehr_events = []
+        for event in meds_events:
+            kwargs = {"code": event["code"]}
+            for key in ("value", "unit", "start", "end", "omop_table"):
+                if key in event and event[key] not in (None, ""):
+                    kwargs[key] = event[key]
+            hf_ehr_events.append(Event(**kwargs))
+
+        return meds_df, meds_events, hf_ehr_events
+
     def __getitem__(self, idx):
         sample = self.samples[idx]
         
@@ -1334,78 +1461,32 @@ class RenjiDataset(Dataset):
         # Load follow-up data
         df_followup = self._load_followup_data(sample)
         
-        # --- Determine Surgery Date (Day 0) ---
-        surgery_date = None
-        if '报告日期' in df_followup.columns and '术后天数' in df_followup.columns:
-            # Try to find row with 术后天数 == 0
-            day0_rows = df_followup[df_followup['术后天数'] == 0]
-            if len(day0_rows) > 0:
-                surgery_date = day0_rows.iloc[0]['报告日期']
-            else:
-                # If no Day 0, calculate from the first available record
-                # surgery_date = report_date - postoperative_days
-                if len(df_followup) > 0:
-                    first_row = df_followup.iloc[0]
-                    try:
-                        report_date = pd.to_datetime(first_row['报告日期'])
-                        post_days = float(first_row['术后天数'])
-                        if pd.notna(report_date) and pd.notna(post_days):
-                            surgery_date = report_date - pd.Timedelta(days=post_days)
-                    except:
-                        pass
-                        
-        if surgery_date is None and '报告日期' in df_followup.columns and len(df_followup) > 0:
-             # Fallback: use first report date if no postoperative days info
-             surgery_date = df_followup.iloc[0]['报告日期']
-             
-        # Format surgery_date as YYYY-MM-DD
-        if surgery_date is not None:
-            try:
-                surgery_date = pd.to_datetime(surgery_date)
-            except:
-                surgery_date = None
+        first_row = df_followup.iloc[0]
+        surgery_date = pd.to_datetime(first_row['报告日期']) - pd.Timedelta(days=float(first_row['术后天数']))
         
         # Load static features
         static_features = self._get_static_features(fname_key)
         
-        # Load pathology (placeholder)
-        pathology_data = self._get_pathology_data(fname_key)
-        
         # Get patient age and gender for reference range lookup
-        age_years = 5.0  # Default age
-        gender = None
-        if fname_key in self.patient_info_map:
-            patient_info = self.patient_info_map[fname_key]
-            # Get gender
-            recipient_gender = patient_info.get('recipient_gender')
-            if pd.notna(recipient_gender):
-                gender = 'M' if str(recipient_gender).upper() in ['M', 'MALE', '男'] else 'F'
-            # Get age from date_of_birth
-            dob = patient_info.get('date_of_birth')
-            if pd.notna(dob):
-                try:
-                    dob = pd.to_datetime(dob)
-                    # Use current or first report date to estimate age
-                    if '报告日期' in df_followup.columns and len(df_followup) > 0:
-                        report_date = df_followup['报告日期'].iloc[0]
-                        if pd.notna(report_date):
-                            age_years = (report_date - dob).days / 365.25
-                except:
-                    pass
+        patient_info = self.patient_info_map[fname_key]
+        recipient_gender = patient_info['recipient_gender']
+        gender = 'M' if str(recipient_gender).upper() in ['M', 'MALE', '男'] else 'F'
+        dob = pd.to_datetime(patient_info['date_of_birth'])
+        report_date = pd.to_datetime(df_followup['报告日期'].iloc[0])
+        age_years = (report_date - dob).days / 365.25
         
         # PREPARE TARGETS
         if self.task_mode == 'multi_label' or self.task_mode == 'multi_task':
             # labels_matrix: shape [num_points, num_metrics]
             labels_matrix = torch.full((len(self.ALL_POINTS), len(self.ALL_METRICS)), -100, dtype=torch.float32)
             
-            if sample['fname_key'] in self.labels_df.index:
-                patient_labels = self.labels_df.loc[sample['fname_key']]
-                for p_idx, p_key in enumerate(self.ALL_POINTS):
-                    _, prefix, _ = self.PREDICTION_POINTS[p_key]
-                    for m_idx, met in enumerate(self.ALL_METRICS):
-                        col_name = f"{prefix}_{met}"
-                        if col_name in patient_labels and pd.notna(patient_labels[col_name]):
-                            labels_matrix[p_idx, m_idx] = float(patient_labels[col_name])
+            patient_labels = self.labels_df.loc[sample['fname_key']]
+            for p_idx, p_key in enumerate(self.ALL_POINTS):
+                _, prefix, _ = self.PREDICTION_POINTS[p_key]
+                for m_idx, met in enumerate(self.ALL_METRICS):
+                    col_name = f"{prefix}_{met}"
+                    if col_name in patient_labels and pd.notna(patient_labels[col_name]):
+                        labels_matrix[p_idx, m_idx] = float(patient_labels[col_name])
             
             output_label = labels_matrix
             task_info = deepcopy(self.task_schema["multi_label_prediction"])
@@ -1425,7 +1506,7 @@ class RenjiDataset(Dataset):
             metric = sample['metric']
             label_val = sample['label_val']
             # Translate metric to English for instruction
-            metric_en = self.ZH_TO_EN.get(metric, metric)
+            metric_en = metric
 
             task_info = deepcopy(self.task_schema["single_metric_prediction"])
             instruction = task_info["instruction_template"].format(
@@ -1474,6 +1555,17 @@ class RenjiDataset(Dataset):
         }
         
         output_sample["candidates"] = ["0", "1"]
+
+        if self.return_meds:
+            meds_df, meds_events, hf_ehr_events = self.meds_input_process(
+                subject_id=fname_key,
+                static_features=static_features,
+                df_followup=df_followup,
+                surgery_date=surgery_date,
+            )
+            output_sample["meds_table"] = meds_df
+            output_sample["meds_events"] = meds_events
+            output_sample["hf_ehr_events"] = hf_ehr_events
         
         if self.table_mode in {'table_only', 'table_plus_rest_text'}:
             output_sample["measurement_table"] = final_table
@@ -1504,7 +1596,7 @@ class RenjiDataset(Dataset):
 
             if len(parts) >= 2:
                 has_changes = True
-                base_time = pd.to_datetime(row['Time'], errors='coerce')
+                base_time = pd.to_datetime(row['Time'])
                 interval_hours = 24.0 / len(parts)
 
                 for i, part in enumerate(parts):
@@ -1536,7 +1628,7 @@ class RenjiDataset(Dataset):
         sections = []
         table = measurement_table.copy()
         if 'Time' in table.columns:
-            table['Time'] = pd.to_datetime(table['Time'], errors='coerce')
+            table['Time'] = pd.to_datetime(table['Time'])
             table['Time'] = table['Time'].dt.strftime('%Y-%m-%d %H:%M:%S')
             table['Time'] = table['Time'].fillna('')
 
@@ -1559,7 +1651,7 @@ class RenjiDataset(Dataset):
                 ]
                 for _, row in sub_df.iterrows():
                     lines.append(
-                        f"| {str(row.get('Item', '')).strip()} | {str(row.get('Value', '')).strip()} | {str(row.get('Unit', '')).strip()} |"
+                        f"| {str(row['Item']).strip()} | {str(row['Value']).strip()} | {str(row['Unit']).strip()} |"
                     )
             else:
                 lines = [
@@ -1569,7 +1661,7 @@ class RenjiDataset(Dataset):
                 ]
                 for _, row in sub_df.iterrows():
                     lines.append(
-                        f"| {str(row.get('Time', '')).strip()} | {str(row.get('Item', '')).strip()} | {str(row.get('Value', '')).strip()} | {str(row.get('Unit', '')).strip()} |"
+                        f"| {str(row['Time']).strip()} | {str(row['Item']).strip()} | {str(row['Value']).strip()} | {str(row['Unit']).strip()} |"
                     )
 
             sections.append("\n".join(lines))
@@ -1579,59 +1671,11 @@ class RenjiDataset(Dataset):
     @staticmethod
     def build_input_text(sample, include_unstructured_text=True, unstructured_key="input"):
         sections = []
-        table_text = RenjiDataset.table_to_markdown(sample.get("measurement_table"))
+        table_text = RenjiDataset.table_to_markdown(sample["measurement_table"])
         if table_text:
             sections.append(table_text)
         if include_unstructured_text:
-            unstructured_text = str(sample.get(unstructured_key, "") or "").strip()
+            unstructured_text = str(sample[unstructured_key]).strip()
             if unstructured_text and unstructured_text != table_text:
                 sections.append(unstructured_text)
         return "\n\n".join(sections)
-
-
-__all__ = ["RenjiDataset"]
-
-
-if __name__ == "__main__":
-    # Test execution
-    root_dir = "/home/ma-user/sfs_turbo/sai6/zkwan/Renji"
-    out_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "renji")
-    os.makedirs(out_dir, exist_ok=True)
-
-    print("=== Testing Tabular Mode ===")
-    dataset_tab = RenjiDataset(
-        root_dir=root_dir, 
-        split='test', 
-        table_mode='table_only',
-        shuffle=False
-    )
-    print(f"Tabular Dataset size: {len(dataset_tab)}")
-    sample_tab = dataset_tab[0]
-    
-    if 'measurement_table' in sample_tab:
-        df = sample_tab['measurement_table']
-        if df is not None and not df.empty:
-            output_csv = os.path.join(out_dir, "renji_sample_tabular.csv")
-            df.to_csv(output_csv, index=False, encoding='utf-8-sig')
-            print(f"Successfully saved tabular sample to {output_csv}")
-    
-    print("\n=== Testing Text Mode ===")
-    # For text mode we can use task_mode='single' since return_table=False
-    dataset_txt = RenjiDataset(
-        root_dir=root_dir, 
-        split='test', 
-        table_mode='text_only',
-        shuffle=False,
-        task_mode='single'
-    )
-    sample_txt = dataset_txt[0]
-    
-    output_txt = os.path.join(out_dir, "renji_sample_text.txt")
-    with open(output_txt, 'w', encoding='utf-8') as f:
-        f.write("=== INPUT ===\n")
-        f.write(str(sample_txt.get('input', '')) + "\n\n")
-        f.write("=== INSTRUCTION ===\n")
-        f.write(str(sample_txt.get('instruction', '')) + "\n\n")
-        f.write("=== TASK INFO ===\n")
-        f.write(str(sample_txt.get('task_info', '')) + "\n")
-    print(f"Successfully saved text sample to {output_txt}")

@@ -30,7 +30,7 @@ def quiet_non_main_process_logs():
         logging.getLogger("accelerate").setLevel(logging.ERROR)
         logging.getLogger("deepspeed").setLevel(logging.ERROR)
 
-from dataset.renji_dataset import RenjiDataset
+from dataset.renji.renji_dataset import RenjiDataset
 from models.TableEncoder.config import LongTableEncoder1DConfig
 from models.TableEncoder.query_classifier import TaskQueryClassificationModel
 from utils.weight_loader import load_model_weights
@@ -62,14 +62,13 @@ class ModelArguments:
 @dataclass
 class DataArguments:
     max_table_len: int = field(metadata={"help": "Keep only the most recent N table rows before encoding"})
-    data_dir: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/Renji")
-    embedding_cache: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/.cache/embeddings/renji/text_embeddings.pt")
+    data_dir: str = field(default="/data/EHR_data_public/Renji")
+    embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/renji/text_embeddings.pt")
     max_train_samples: Optional[int] = field(default=None)
-    type_vocab_file: str = field(default="data/type_vocab.json")
-    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_embeddings.pt")
-    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
-    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
-    query_max_length: int = field(default=128)
+    type_vocab_file: str = field(default="/data/zikun_workspace/code/data/type_vocab.json")
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt")
+    query_llm_model_path: str = field(default="/data/model_weights_public/BlueZeros/EHR-R1-1.7B")
+    query_max_length: int = field(default=512)
 
 
 @dataclass
@@ -92,9 +91,9 @@ def main():
     training_args.logging_steps = 10
     training_args.save_strategy = "steps"
     training_args.save_steps = 100
-    training_args.save_total_limit = 2
+    training_args.save_total_limit = 1
     training_args.bf16 = True
-    training_args.dataloader_num_workers = 4
+    training_args.dataloader_num_workers = 32
     training_args.remove_unused_columns = False
     training_args.report_to = ["wandb"]
     training_args.save_safetensors = True
@@ -119,16 +118,6 @@ def main():
         max_samples=data_args.max_train_samples, task_mode='multi_label'
     )
 
-    encoder_config = LongTableEncoder1DConfig(
-        text_dim=text_dim,
-        type_vocab_size=len(type_vocab),
-        max_table_len=data_args.max_table_len,
-        num_points=len(RenjiDataset.ALL_POINTS),
-        num_metrics=len(RenjiDataset.ALL_METRICS),
-        num_classes=len(RenjiDataset.ALL_POINTS) * len(RenjiDataset.ALL_METRICS),
-        problem_type="multi_label_classification"
-    )
-    
     query_texts = {}
     query_template = RenjiDataset.TASK_INFO["multi_label_prediction"]["instruction_template"]
     for point_key in RenjiDataset.ALL_POINTS:
@@ -138,9 +127,19 @@ def main():
     query_embeddings_by_text, query_dim = build_query_embeddings(
         query_texts,
         data_args.query_embedding_cache,
-        data_args.query_text_encoder_path,
-        data_args.query_text_encoder_base_model,
+        data_args.query_llm_model_path,
         data_args.query_max_length,
+    )
+
+    encoder_config = LongTableEncoder1DConfig(
+        text_dim=text_dim,
+        type_vocab_size=len(type_vocab),
+        max_table_len=data_args.max_table_len,
+        dim_out=query_dim,
+        num_points=len(RenjiDataset.ALL_POINTS),
+        num_metrics=len(RenjiDataset.ALL_METRICS),
+        num_classes=len(RenjiDataset.ALL_POINTS) * len(RenjiDataset.ALL_METRICS),
+        problem_type="multi_label_classification"
     )
 
     model = TaskQueryClassificationModel(

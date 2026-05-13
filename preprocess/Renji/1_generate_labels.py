@@ -17,12 +17,10 @@ DEFAULT_OUTPUT_FILE = "/data/EHR_data_public/Renji/labels.csv"
 
 # Post-op day windows aligned with the updated Renji task definition.
 WINDOWS = {
-    "2w-1m": (15, 30),
-    "2m-6m": (31, 180),
-    "7m-12m": (181, 365),
-    "13m-14m": (366, 395),
-    "15m-24m": (396, 730),
-    "2y+": (731, 99999),
+    "0-30d": (0, 30),
+    "30-180d": (30, 180),
+    "180-365d": (180, 365),
+    "365d+": (365, float("inf")),
 }
 
 # Optional whitelist of label columns to keep.
@@ -92,8 +90,10 @@ def get_window(day):
     except Exception:
         return None
 
-    for name, (start, end) in WINDOWS.items():
-        if start <= day <= end:
+    for idx, (name, (start, end)) in enumerate(WINDOWS.items()):
+        if idx == 0 and start <= day <= end:
+            return name
+        if idx > 0 and start < day <= end:
             return name
     return None
 

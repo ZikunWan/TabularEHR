@@ -13,7 +13,7 @@ from iterstrat.ml_stratifiers import MultilabelStratifiedShuffleSplit
 DEFAULT_DATA_DIR = "/data/EHR_data_public/Renji"
 DEFAULT_SAVE_DIR = "/data/EHR_data_public/Renji/index"
 
-LABEL_WINDOWS = ["2w-1m", "2m-6m", "7m-12m", "13m-14m", "15m-24m", "2y+"]
+LABEL_WINDOWS = ["0-30d", "30-180d", "180-365d", "365d+"]
 
 # Target metrics
 TARGET_METRICS = [

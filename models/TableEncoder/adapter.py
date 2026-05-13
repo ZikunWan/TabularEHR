@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from .attention import FeedForward
 import numpy as np
 from torch.nn.init import trunc_normal_
 

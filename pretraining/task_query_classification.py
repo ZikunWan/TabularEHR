@@ -7,7 +7,7 @@ from typing import Optional
 
 import torch
 from torch.utils.data import Dataset
-from transformers import AutoTokenizer, EarlyStoppingCallback, HfArgumentParser, Trainer, TrainingArguments, set_seed
+from transformers import AutoModelForCausalLM, AutoTokenizer, EarlyStoppingCallback, HfArgumentParser, Trainer, TrainingArguments, set_seed
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
@@ -16,7 +16,6 @@ from dataset.mimic.mimic_dataset import MIMICIV
 from dataset.mimic.task_info import get_task_info
 from models.TableEncoder.config import LongTableEncoder1DConfig
 from models.TableEncoder.query_classifier import TaskQueryClassificationModel
-from models.TableEncoder.text_encoder import TextEncoder
 from utils.collate import build_table_token_tensors
 from utils.load_embedding import (
     build_embedding_matrix,
@@ -65,10 +64,9 @@ class DataArguments:
     table_text_embedding: str = field(default="/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt")
     type_vocab_file: str = field(default="/data/zikun_workspace/code/data/type_vocab.json")
     pretrained_path: Optional[str] = field(default="/data/zikun_workspace/checkpoints/pretraining/contrastive_learning")
-    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/mimic_iv/task_query_embeddings.pt")
-    query_text_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt")
-    query_text_encoder_base_model: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
-    query_max_length: int = field(default=128)
+    query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/mimic_iv/task_query_llm_embeddings.pt")
+    query_llm_model_path: str = field(default="/data/model_weights_public/BlueZeros/EHR-R1-1.7B")
+    query_max_length: int = field(default=512)
     max_table_len: Optional[int] = field(default=16384)
     min_table_rows: int = field(default=2)
     max_train_samples: Optional[int] = field(default=None)
@@ -124,18 +122,13 @@ def resolve_sample_info_paths(path_arg: str):
     return paths
 
 
-def load_checkpoint_state_dict(checkpoint_path: str):
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    return checkpoint.get("state_dict", checkpoint)
-
-
-def load_query_text_encoder(model_path: str, base_model_path: str, device: torch.device):
-    model_name = base_model_path if model_path.endswith(".pt") else model_path
-    model = TextEncoder(model_name)
-    if model_path.endswith(".pt"):
-        state_dict = load_checkpoint_state_dict(model_path)
-        model.load_state_dict(state_dict, strict=False)
-    return model.to(device)
+def resolve_task_names_from_paths(sample_info_paths):
+    return sorted(
+        {
+            os.path.splitext(os.path.basename(sample_info_path))[0]
+            for sample_info_path in sample_info_paths
+        }
+    )
 
 
 def local_rank0() -> bool:
@@ -156,7 +149,6 @@ def build_query_embeddings(
     task_names,
     cache_path: str,
     model_path: str,
-    base_model_path: str,
     max_length: int,
 ):
     task_names = sorted(set(task_names))
@@ -173,11 +165,29 @@ def build_query_embeddings(
     task_info = get_task_info()
     query_texts = [task_info[task_name]["instruction"] for task_name in task_names]
 
-    tokenizer_path = base_model_path if model_path.endswith(".pt") else model_path
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_query_text_encoder(model_path, base_model_path, device)
-    model.eval()
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=True)
+    tokenizer.truncation_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    device = torch.device(f"cuda:{int(os.environ.get('LOCAL_RANK', '0'))}" if torch.cuda.is_available() else "cpu")
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        trust_remote_code=True,
+        dtype=torch.bfloat16,
+        device_map={"": device},
+    ).eval()
+
+    if tokenizer.chat_template:
+        query_texts = [
+            tokenizer.apply_chat_template(
+                [{"role": "user", "content": query_text}],
+                tokenize=False,
+                add_generation_prompt=False,
+                enable_thinking=False,
+            )
+            for query_text in query_texts
+        ]
 
     tokens = tokenizer(
         query_texts,
@@ -185,9 +195,20 @@ def build_query_embeddings(
         truncation=True,
         max_length=max_length,
         return_tensors="pt",
-    ).to(device)
+    ).to(model.device)
     with torch.no_grad():
-        query_embeds = model.encode_text(tokens).cpu()
+        outputs = model(**tokens, output_hidden_states=True)
+        last_hidden = outputs.hidden_states[-1]
+        last_indices = get_llm_pooling_indices(
+            model_path,
+            tokenizer,
+            tokens["input_ids"],
+            tokens["attention_mask"],
+        )
+        query_embeds = last_hidden[
+            torch.arange(last_hidden.size(0), device=last_hidden.device),
+            last_indices,
+        ].cpu().to(torch.bfloat16)
 
     embeddings = {
         task_name: query_embeds[idx]
@@ -197,14 +218,29 @@ def build_query_embeddings(
     torch.save(
         {
             "embeddings": embeddings,
-            "text_dim": model.hidden_size,
+            "text_dim": int(query_embeds.size(-1)),
             "model_path": model_path,
-            "base_model_path": base_model_path,
         },
         cache_path,
     )
     rank0_print(f"Saved query embeddings to {cache_path}")
-    return embeddings, int(model.hidden_size)
+    return embeddings, int(query_embeds.size(-1))
+
+
+def get_llm_pooling_indices(model_path: str, tokenizer, input_ids: torch.Tensor, attention_mask: torch.Tensor):
+    model_name_lower = model_path.lower()
+    eos_id = None
+    if "qwen" in model_name_lower or "ehr-r1" in model_name_lower:
+        eos_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+
+    if eos_id is not None:
+        eos_mask = input_ids == eos_id
+        if eos_mask.sum().item() > 0:
+            seq_len = input_ids.size(1)
+            indices = torch.arange(seq_len, device=input_ids.device)
+            return (eos_mask * indices).argmax(dim=1)
+
+    return attention_mask.sum(dim=1) - 1
 
 
 def parse_binary_label(value) -> int:
@@ -337,6 +373,13 @@ def main():
         raise ValueError(f"No train sample_info files found: {data_args.train_sample_info_path}")
     if len(val_paths) == 0:
         raise ValueError(f"No val sample_info files found: {data_args.val_sample_info_path}")
+    task_names = resolve_task_names_from_paths(train_paths + val_paths)
+    query_embeddings, query_dim = build_query_embeddings(
+        task_names=task_names,
+        cache_path=data_args.query_embedding_cache,
+        model_path=data_args.query_llm_model_path,
+        max_length=data_args.query_max_length,
+    )
 
     embedding_cache, text_dim = load_embedding_cache(data_args.table_text_embedding)
     vocab_keys = build_vocab_keys(embedding_cache)
@@ -349,19 +392,12 @@ def main():
 
     train_dataset = TaskQueryDataset(data_args.root_dir, train_paths, data_args.max_train_samples)
     val_dataset = TaskQueryDataset(data_args.root_dir, val_paths, data_args.max_eval_samples)
-    task_names = sorted(set(train_dataset.task_names()) | set(val_dataset.task_names()))
-    query_embeddings, query_dim = build_query_embeddings(
-        task_names=task_names,
-        cache_path=data_args.query_embedding_cache,
-        model_path=data_args.query_text_encoder_path,
-        base_model_path=data_args.query_text_encoder_base_model,
-        max_length=data_args.query_max_length,
-    )
 
     config = LongTableEncoder1DConfig(
         text_dim=text_dim,
         type_vocab_size=type_vocab_size,
         max_table_len=data_args.max_table_len,
+        dim_out=query_dim,
         num_classes=1,
         problem_type="single_label_classification",
     )

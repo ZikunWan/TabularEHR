@@ -8,9 +8,11 @@ from glob import glob
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 from transformers import HfArgumentParser
 
@@ -22,15 +24,15 @@ from dataset.ehrshot.ehrshot_dataset import EHRSHOTDataset
 from dataset.eicu.eicu_dataset import EICUDataset
 from dataset.mimic.mimic_dataset import MIMICIV
 from dataset.mimic_iv_cdm.mimic_iv_cdm_dataset import MIMICIVCDM
+from dataset.renji.renji_dataset import RenjiDataset
 from hf_ehr.config import (
     CategoricalTCE,
-    CodeTCE,
     NumericalRangeTCE,
     load_tokenizer_config_and_metadata_from_path,
     save_tokenizer_config_to_path,
 )
 from hf_ehr.data.tokenization import CLMBRTokenizer
-from train.MEDS_encoder.train_ehrshot_llama import _load_clmbr_tokenizer
+from train.Llama.train_ehrshot_llama import _load_clmbr_tokenizer
 
 
 def rank0_print(*args, **kwargs):
@@ -62,32 +64,22 @@ class Reservoir:
 
 @dataclass
 class ExpansionArguments:
+    output_tokenizer_config_path: str = field(
+        metadata={"help": "Explicit output tokenizer_config.json path."},
+    )
     dataset_name: str = field(
         default="eicu",
-        metadata={"help": "One of: ehrshot, eicu, ehr_bench, mimic_iv_cdm."},
+        metadata={"help": "One of: ehrshot, eicu, ehr_bench, mimic_iv_cdm, renji."},
     )
     model_name_or_path: str = field(
         default="/data/model_weights_public/StanfordShahLab/llama-base-4096-clmbr",
         metadata={"help": "Base model path (must resolve tokenizer_config.json)."},
-    )
-    output_tokenizer_config_path: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": (
-                "Optional explicit output path. If unset, auto-save to "
-                "/data/zikun_workspace/.cache/meds_encoder_tokenizers/<dataset>/expanded_tokenizer_config.json"
-            )
-        },
     )
     overwrite_output: bool = field(
         default=False,
         metadata={"help": "Overwrite output_tokenizer_config_path if it already exists."},
     )
     seed: int = field(default=42, metadata={"help": "Random seed."})
-    add_code_fallback: bool = field(
-        default=True,
-        metadata={"help": "Add CodeTCE fallback for all observed codes that lack plain code entries."},
-    )
     add_categorical_entries: bool = field(
         default=True,
         metadata={"help": "Add CategoricalTCE entries for observed text values."},
@@ -181,6 +173,10 @@ class DataArguments:
     mimic_iv_cdm_root_dir: str = field(default="/data/EHR_data_public/mimic-iv-cdm")
     mimic_iv_cdm_concept_map_dir: Optional[str] = field(default=None)
 
+    # Renji
+    renji_root_dir: str = field(default="/data/EHR_data_public/Renji")
+    renji_eval_split: str = field(default="test")
+
     lazy_mode: bool = field(default=True)
 
 
@@ -199,7 +195,7 @@ def _resolve_sample_info_path(dataset_name: str, split: str, data_args: DataArgu
             return data_args.eicu_val_info_path
         raise ValueError("eICU currently supports split=train/val for this script.")
 
-    return None
+    raise ValueError(f"Unsupported dataset_name='{dataset_name}' for sample_info_path resolution.")
 
 
 def _resolve_ehr_bench_sample_info_paths(split: str, data_args: DataArguments) -> List[str]:
@@ -327,6 +323,20 @@ def _load_datasets_for_split(exp_args: ExpansionArguments, data_args: DataArgume
         )
         return [(split, dataset)]
 
+    if ds == "renji":
+        renji_split = data_args.renji_eval_split if split in {"val", "validation"} else split
+        dataset = RenjiDataset(
+            root_dir=data_args.renji_root_dir,
+            split=renji_split,
+            table_mode="text_only",
+            target_prediction_points=["day0", "day30", "day180", "day365"],
+            shuffle=False,
+            task_mode="multi_label",
+            return_meds=True,
+        )
+        dataset.samples = [sample for sample in dataset.samples if sample["metric"] == "all"]
+        return [(renji_split, dataset)]
+
     raise ValueError(f"Unsupported dataset_name='{exp_args.dataset_name}'.")
 
 
@@ -337,28 +347,10 @@ def _load_train_val_datasets(exp_args: ExpansionArguments, data_args: DataArgume
     return split_datasets
 
 
-def _safe_event_attr(event, key: str):
+def _event_attr(event, key: str):
     if isinstance(event, dict):
-        return event.get(key)
-    return getattr(event, key, None)
-
-
-def _safe_tag(text: str) -> str:
-    raw = str(text).strip().lower()
-    mapped = "".join(ch if (ch.isalnum() or ch in "._-") else "-" for ch in raw)
-    mapped = mapped.strip("-")
-    return mapped or "unknown"
-
-
-def _resolve_output_tokenizer_config_path(exp_args: ExpansionArguments) -> str:
-    if exp_args.output_tokenizer_config_path:
-        return exp_args.output_tokenizer_config_path
-    dataset_tag = _safe_tag(exp_args.dataset_name)
-    return os.path.join(
-        "/data/zikun_workspace/.cache/meds_encoder_tokenizers",
-        dataset_tag,
-        "expanded_tokenizer_config.json",
-    )
+        return event[key]
+    return getattr(event, key)
 
 
 def _get_sample_hf_ehr_events(dataset_name: str, dataset, index: int):
@@ -375,6 +367,20 @@ def _get_sample_hf_ehr_events(dataset_name: str, dataset, index: int):
         hadm_id = index_item["hadm_id"]
         cur_item = dataset.raw_data[category][hadm_id]
         _, _, hf_ehr_events = dataset.meds_input_process(cur_item, return_hf_ehr_events=True)
+        return hf_ehr_events
+
+    if ds == "renji":
+        index_item = dataset.samples[index]
+        df_followup = dataset._load_followup_data(index_item)
+        first_row = df_followup.iloc[0]
+        surgery_date = pd.to_datetime(first_row["报告日期"]) - pd.Timedelta(days=float(first_row["术后天数"]))
+        static_features = dataset._get_static_features(index_item["fname_key"])
+        _, _, hf_ehr_events = dataset.meds_input_process(
+            subject_id=index_item["fname_key"],
+            static_features=static_features,
+            df_followup=df_followup,
+            surgery_date=surgery_date,
+        )
         return hf_ehr_events
 
     sample = dataset[index]
@@ -395,11 +401,11 @@ def _try_parse_numeric(value, parse_numeric_strings: bool) -> Optional[float]:
         txt = value.strip()
         if not txt:
             return None
-        try:
+        numeric_chars = txt.lstrip("+-").replace(".", "", 1)
+        if numeric_chars.isdigit():
             v = float(txt)
             return v if math.isfinite(v) else None
-        except Exception:
-            return None
+        return None
 
     return None
 
@@ -474,7 +480,7 @@ def _scan_dataset_events(
     if show_progress:
         iterator = tqdm(
             indices,
-            desc=progress_desc or "Scanning events",
+            desc=progress_desc,
             disable=False,
         )
 
@@ -484,7 +490,7 @@ def _scan_dataset_events(
             continue
 
         for event in events:
-            code = _safe_event_attr(event, "code")
+            code = _event_attr(event, "code")
             if code is None:
                 continue
             code = str(code).strip()
@@ -497,12 +503,12 @@ def _scan_dataset_events(
             mapped = base_tokenizer.convert_event_to_token(event)
             if mapped is None:
                 unresolved_total += 1
-                if code in getattr(base_tokenizer, "code_2_token", {}):
+                if code in base_tokenizer.code_2_token:
                     value_mismatch_counter[code] += 1
                 else:
                     missing_code_counter[code] += 1
 
-            value = _safe_event_attr(event, "value")
+            value = _event_attr(event, "value")
             numeric_value = _try_parse_numeric(value, parse_numeric_strings=parse_numeric_strings)
             if numeric_value is not None:
                 reservoir = numeric_reservoirs.get(code)
@@ -585,7 +591,7 @@ def _scan_worker_chunk(task):
 def main():
     parser = HfArgumentParser((ExpansionArguments, DataArguments))
     exp_args, data_args = parser.parse_args_into_dataclasses()
-    output_tokenizer_config_path = _resolve_output_tokenizer_config_path(exp_args)
+    output_tokenizer_config_path = exp_args.output_tokenizer_config_path
 
     if exp_args.num_numeric_buckets < 1:
         raise ValueError("--num_numeric_buckets must be >= 1")
@@ -610,11 +616,7 @@ def main():
 
     # Resolve tokenizer config path strictly from model_name_or_path.
     base_tokenizer = _load_clmbr_tokenizer(exp_args.model_name_or_path)
-    tokenizer_config_path = getattr(base_tokenizer, "path_to_tokenizer_config", None)
-    if not isinstance(tokenizer_config_path, str) or not os.path.isfile(tokenizer_config_path):
-        raise FileNotFoundError(
-            "Cannot resolve tokenizer_config.json from --model_name_or_path."
-        )
+    tokenizer_config_path = base_tokenizer.path_to_tokenizer_config
 
     split_datasets = _load_train_val_datasets(exp_args, data_args)
     split_sizes = {"train": 0, "val": 0}
@@ -638,7 +640,6 @@ def main():
     rank0_print(f"Scanned samples (full): {total_samples_scanned}")
     rank0_print(f"Numeric buckets: {exp_args.num_numeric_buckets}")
     rank0_print(f"Min numeric observations/code: {exp_args.min_numeric_values_per_code}")
-    rank0_print(f"Code fallback enabled: {exp_args.add_code_fallback}")
     rank0_print(f"Categorical expansion enabled: {exp_args.add_categorical_entries}")
     rank0_print(f"Numerical expansion enabled: {exp_args.add_numerical_entries}")
     rank0_print(f"Scan workers: {exp_args.scan_num_workers}")
@@ -746,7 +747,6 @@ def main():
 
     base_config, base_metadata = load_tokenizer_config_and_metadata_from_path(tokenizer_config_path)
 
-    existing_code_entries = {entry.code for entry in base_config if entry.type == "code"}
     existing_numeric_codes = {entry.code for entry in base_config if entry.type == "numerical_range"}
     existing_categorical = defaultdict(set)
     for entry in base_config:
@@ -756,19 +756,10 @@ def main():
 
     expanded_config = list(base_config)
 
-    added_code_entries = 0
     added_categorical_entries = 0
     added_numeric_entries = 0
     skipped_numeric_existing = 0
     skipped_numeric_few_samples = 0
-
-    if exp_args.add_code_fallback:
-        for code in sorted(code_counts.keys()):
-            if code in existing_code_entries:
-                continue
-            expanded_config.append(CodeTCE(code=code))
-            existing_code_entries.add(code)
-            added_code_entries += 1
 
     if exp_args.add_categorical_entries:
         for code, counter in categorical_counts.items():
@@ -815,7 +806,7 @@ def main():
 
             existing_numeric_codes.add(code)
 
-    os.makedirs(os.path.dirname(output_tokenizer_config_path) or ".", exist_ok=True)
+    Path(output_tokenizer_config_path).parent.mkdir(parents=True, exist_ok=True)
 
     expansion_meta = {
         "timestamp": datetime.now().isoformat(),
@@ -830,7 +821,7 @@ def main():
         "total_events": total_events,
         "unresolved_before": unresolved_total,
         "unresolved_before_rate": unresolved_rate,
-        "added_code_entries": added_code_entries,
+        "added_code_entries": 0,
         "added_categorical_entries": added_categorical_entries,
         "added_numeric_entries": added_numeric_entries,
         "skipped_numeric_existing": skipped_numeric_existing,
@@ -841,7 +832,7 @@ def main():
         "max_numeric_values_per_code": exp_args.max_numeric_values_per_code,
     }
 
-    metadata = dict(base_metadata) if isinstance(base_metadata, dict) else {}
+    metadata = dict(base_metadata)
     metadata["auto_expansion"] = expansion_meta
 
     save_tokenizer_config_to_path(output_tokenizer_config_path, expanded_config, metadata=metadata)
@@ -853,7 +844,7 @@ def main():
     rank0_print("-" * 88)
     rank0_print(f"Base token entries: {len(base_config)}")
     rank0_print(f"Expanded token entries: {len(expanded_config)}")
-    rank0_print(f"Added code entries: {added_code_entries}")
+    rank0_print("Added code entries: 0")
     rank0_print(f"Added categorical entries: {added_categorical_entries}")
     rank0_print(f"Added numerical_range entries: {added_numeric_entries}")
     rank0_print(f"Skipped numeric codes (already had ranges): {skipped_numeric_existing}")
@@ -898,7 +889,7 @@ def main():
         report["verify_unresolved_after_rate"] = float(verify_unresolved_rate)
 
     if exp_args.report_path:
-        os.makedirs(os.path.dirname(exp_args.report_path) or ".", exist_ok=True)
+        Path(exp_args.report_path).parent.mkdir(parents=True, exist_ok=True)
         with open(exp_args.report_path, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
         rank0_print(f"Saved report to: {exp_args.report_path}")

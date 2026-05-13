@@ -2,27 +2,11 @@ import os
 import time
 
 import torch
-from transformers import AutoTokenizer
-
-from models.TableEncoder.text_encoder import TextEncoder
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def local_rank0() -> bool:
     return int(os.environ.get("LOCAL_RANK", "0")) == 0
-
-
-def load_checkpoint_state_dict(checkpoint_path: str):
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    return checkpoint.get("state_dict", checkpoint)
-
-
-def load_query_text_encoder(model_path: str, base_model_path: str, device: torch.device):
-    model_name = base_model_path if model_path.endswith(".pt") else model_path
-    model = TextEncoder(model_name)
-    if model_path.endswith(".pt"):
-        state_dict = load_checkpoint_state_dict(model_path)
-        model.load_state_dict(state_dict, strict=False)
-    return model.to(device)
 
 
 def wait_for_query_cache(cache_path: str, query_keys):
@@ -35,11 +19,26 @@ def wait_for_query_cache(cache_path: str, query_keys):
         time.sleep(2)
 
 
+def get_llm_pooling_indices(model_path: str, tokenizer, input_ids: torch.Tensor, attention_mask: torch.Tensor):
+    model_name_lower = model_path.lower()
+    eos_id = None
+    if "qwen" in model_name_lower or "ehr-r1" in model_name_lower:
+        eos_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+
+    if eos_id is not None:
+        eos_mask = input_ids == eos_id
+        if eos_mask.sum().item() > 0:
+            seq_len = input_ids.size(1)
+            indices = torch.arange(seq_len, device=input_ids.device)
+            return (eos_mask * indices).argmax(dim=1)
+
+    return attention_mask.sum(dim=1) - 1
+
+
 def build_query_embeddings(
     query_texts: dict[str, str],
     cache_path: str,
     model_path: str,
-    base_model_path: str,
     max_length: int,
 ):
     query_texts = {str(key): str(text) for key, text in query_texts.items()}
@@ -62,21 +61,51 @@ def build_query_embeddings(
         embeddings.update(cache["embeddings"])
 
     missing_keys = [query_key for query_key in query_keys if query_key not in embeddings]
-    tokenizer_path = base_model_path if model_path.endswith(".pt") else model_path
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_query_text_encoder(model_path, base_model_path, device)
-    model.eval()
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=True)
+    tokenizer.truncation_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    device = torch.device(f"cuda:{int(os.environ.get('LOCAL_RANK', '0'))}" if torch.cuda.is_available() else "cpu")
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        trust_remote_code=True,
+        dtype=torch.bfloat16,
+        device_map={"": device},
+    ).eval()
+
+    missing_texts = [query_texts[query_key] for query_key in missing_keys]
+    if tokenizer.chat_template:
+        missing_texts = [
+            tokenizer.apply_chat_template(
+                [{"role": "user", "content": query_text}],
+                tokenize=False,
+                add_generation_prompt=False,
+                enable_thinking=False,
+            )
+            for query_text in missing_texts
+        ]
 
     tokens = tokenizer(
-        [query_texts[query_key] for query_key in missing_keys],
+        missing_texts,
         padding=True,
         truncation=True,
         max_length=max_length,
         return_tensors="pt",
-    ).to(device)
+    ).to(model.device)
     with torch.no_grad():
-        query_embeds = model.encode_text(tokens).cpu()
+        outputs = model(**tokens, output_hidden_states=True)
+        last_hidden = outputs.hidden_states[-1]
+        last_indices = get_llm_pooling_indices(
+            model_path,
+            tokenizer,
+            tokens["input_ids"],
+            tokens["attention_mask"],
+        )
+        query_embeds = last_hidden[
+            torch.arange(last_hidden.size(0), device=last_hidden.device),
+            last_indices,
+        ].cpu().to(torch.bfloat16)
 
     for idx, query_key in enumerate(missing_keys):
         embeddings[query_key] = query_embeds[idx]
@@ -85,10 +114,9 @@ def build_query_embeddings(
     torch.save(
         {
             "embeddings": embeddings,
-            "text_dim": model.hidden_size,
+            "text_dim": int(query_embeds.size(-1)),
             "model_path": model_path,
-            "base_model_path": base_model_path,
         },
         cache_path,
     )
-    return {query_key: embeddings[query_key] for query_key in query_keys}, int(model.hidden_size)
+    return {query_key: embeddings[query_key] for query_key in query_keys}, int(query_embeds.size(-1))

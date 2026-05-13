@@ -1,13 +1,8 @@
 deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
     --deepspeed "./ds_config_zero2.json" \
-    --root_dir "/data/zikun_workspace/mimic-iv-3.1_tabular" \
-    --sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv" \
-    --val_sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val/next_token_prediction.csv" \
-    --table_text_embedding "/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt" \
-    --type_vocab_file "/data/zikun_workspace/code/data/type_vocab.json" \
+    --markdown_candidate_count 1024 \
     --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction" \
     --max_table_len 4096 \
-    --table_drop_ratio 0.15 \
     --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 1 \
@@ -21,11 +16,7 @@ deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
     --save_steps 100 \
     --eval_strategy "steps" \
     --eval_steps 100 \
-    --early_stopping_patience 10 \
-    --metric_for_best_model "eval_recall@5" \
     --save_total_limit 1 \
-    --bf16 true \
-    --report_to "wandb" \
     --wandb_project "Contrastive_Learning" \
-    --run_name "contrastive_learning_table_drop_1d" \
+    --run_name "contrastive_learning_table_aug_markdown_bank_1d" \
     --output_dir "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning"
