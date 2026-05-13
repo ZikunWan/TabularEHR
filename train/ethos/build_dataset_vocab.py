@@ -1,6 +1,6 @@
 import argparse
-import importlib
 import json
+import os
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -15,10 +15,63 @@ PROJECT_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(THIS_DIR))
 
+from dataset.ehrshot.ehrshot_dataset import EHRSHOTDataset
+from dataset.eicu.eicu_dataset import EICUDataset
+from dataset.mimic.mimic_dataset import MIMICIV
+from dataset.mimic_iv_cdm.mimic_iv_cdm_dataset import MIMICIVCDM
 from ethos.constants import SpecialToken as ST
 from ethos.vocabulary import Vocabulary
 
 
+EHRSHOT_TASKS = [
+    "guo_los",
+    "guo_readmission",
+    "guo_icu",
+    "lab_anemia",
+    "lab_hyperkalemia",
+    "lab_hyponatremia",
+    "lab_hypoglycemia",
+    "lab_thrombocytopenia",
+    "new_acutemi",
+    "new_celiac",
+    "new_hyperlipidemia",
+    "new_hypertension",
+    "new_lupus",
+    "new_pancan",
+]
+EICU_TASKS = [
+    "mortality",
+    "long_term_mortality",
+    "readmission",
+    "los_3day",
+    "los_7day",
+    "creatinine",
+    "bilirubin",
+    "platelets",
+    "wbc",
+    "final_acuity",
+    "imminent_discharge",
+]
+EHR_BENCH_TASKS = [
+    "Readmission_30day",
+    "Readmission_60day",
+    "Inpatient_Mortality",
+    "LengthOfStay_3day",
+    "LengthOfStay_7day",
+    "ICU_Mortality_1day",
+    "ICU_Mortality_2day",
+    "ICU_Mortality_3day",
+    "ICU_Mortality_7day",
+    "ICU_Mortality_14day",
+    "ICU_Stay_7day",
+    "ICU_Stay_14day",
+    "ICU_Readmission",
+    "ED_Hospitalization",
+    "ED_Inpatient_Mortality",
+    "ED_ICU_Tranfer_12hour",
+    "ED_Reattendance_3day",
+    "ED_Critical_Outcomes",
+]
 TIME_INTERVALS = [
     ("5m-15m", 5 * 60),
     ("15m-45m", 15 * 60),
@@ -287,12 +340,76 @@ def build_from_meds_dataset(
     print(f"Artifacts written to: {output_dir}")
 
 
+def build_dataset(args):
+    if args.dataset_name == "ehrshot":
+        return _ConcatDataset([
+            EHRSHOTDataset(
+                root_dir=args.ehrshot_root_dir,
+                sample_info_path=f"{args.ehrshot_root_dir}/index/ehrshot_train.csv",
+                task_name=task_name,
+                lazy_mode=True,
+                table_mode="table_only",
+                return_meds=True,
+            )
+            for task_name in EHRSHOT_TASKS
+        ])
+
+    if args.dataset_name == "eicu":
+        return _ConcatDataset([
+            EICUDataset(
+                root_dir=args.eicu_root_dir,
+                processed_dir=args.eicu_processed_dir,
+                sample_info_path=f"{args.eicu_processed_dir}/sample_info_train.json",
+                task_name=task_name,
+                lazy_mode=True,
+                shuffle=False,
+                table_mode="table_only",
+                return_meds=True,
+            )
+            for task_name in EICU_TASKS
+        ])
+
+    if args.dataset_name == "ehr_bench":
+        os.environ["MIMIC_SKIP_SAMPLE_CACHE_CHECK"] = "1"
+        return _ConcatDataset([
+            MIMICIV(
+                root_dir=args.ehr_bench_data_dir,
+                sample_info_path=f"{args.ehr_bench_data_dir}/task_index/train/{task_name}.csv",
+                lazy_mode=True,
+                shuffle=False,
+                table_mode="table_only",
+                itemid_representation="code",
+                return_meds=True,
+            )
+            for task_name in EHR_BENCH_TASKS
+        ])
+
+    if args.dataset_name == "mimic_iv_cdm":
+        return MIMICIVCDM(
+            root_dir=args.mimic_iv_cdm_root_dir,
+            split="train",
+            lazy_mode=True,
+            shuffle=False,
+            table_mode="table_only",
+            task_name="MIMIC-IV-CDM Main Disease Diagnoses",
+            return_meds=True,
+            concept_map_dir=args.mimic_iv_cdm_concept_map_dir,
+        )
+
+    raise ValueError(f"Unsupported dataset_name: {args.dataset_name}")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", required=True)
-    parser.add_argument("--dataset_kwargs", default="{}")
+    parser.add_argument("--dataset_name", required=True, choices=["ehrshot", "eicu", "ehr_bench", "mimic_iv_cdm"])
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--overwrite_output", action="store_true")
+    parser.add_argument("--ehrshot_root_dir", default="/data/EHR_data_public/EHRSHOT")
+    parser.add_argument("--eicu_root_dir", default="/data/EHR_data_public/eicu-crd/2.0")
+    parser.add_argument("--eicu_processed_dir", default="/data/zikun_workspace/eicu-crd/processed")
+    parser.add_argument("--ehr_bench_data_dir", default="/data/zikun_workspace/mimic-iv-3.1_tabular")
+    parser.add_argument("--mimic_iv_cdm_root_dir", default="/data/EHR_data_public/mimic-iv-cdm")
+    parser.add_argument("--mimic_iv_cdm_concept_map_dir", default="/data/EHR_data_public/mimic-iv-3.1-meds/pre_MEDS")
     parser.add_argument("--num_numeric_buckets", type=int, default=10)
     parser.add_argument("--min_numeric_values_per_code", type=int, default=20)
     parser.add_argument("--max_text_values_per_code", type=int, default=200)
@@ -303,14 +420,7 @@ def main():
     parser.add_argument("--num_workers", type=int, default=0)
     args = parser.parse_args()
 
-    module_name, target_name = args.dataset.split(":")
-    dataset_fn = getattr(importlib.import_module(module_name), target_name)
-    dataset_kwargs = json.loads(args.dataset_kwargs)
-    dataset = (
-        _ConcatDataset([dataset_fn(**kwargs) for kwargs in dataset_kwargs])
-        if isinstance(dataset_kwargs, list)
-        else dataset_fn(**dataset_kwargs)
-    )
+    dataset = build_dataset(args)
 
     build_from_meds_dataset(
         dataset,
