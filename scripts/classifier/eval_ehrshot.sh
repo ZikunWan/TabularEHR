@@ -1,47 +1,34 @@
 #!/bin/bash
-NUM_GPUS=$(nvidia-smi -L | wc -l)
-cd /home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/test/Classifier
+set -e
 
-TASKS=(
-    #"guo_los"
-    #"guo_readmission"
-    #"guo_icu"
-    #"lab_anemia"
-    #"lab_hyperkalemia"
-    #"lab_hyponatremia"
-    "lab_hypoglycemia"
-    #"lab_thrombocytopenia"
-    #"new_acutemi"
-    #"new_celiac"
-    #"new_hyperlipidemia"
-    #"new_hypertension"
-    #"new_lupus"
-    #"new_pancan"
-)
+cd "$(dirname "$0")/../../test/Classifier"
 
-# Base directory where stage1-pretrained fine-tuning saved task checkpoints
-BASE_CHECKPOINT_DIR="/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/ehrshot/using_stage1_pretraining"
-
-for TASK in "${TASKS[@]}"; do
-    echo "==================================="
-    echo "Testing Task: $TASK"
-    echo "==================================="
-    
-    TASK_CHECKPOINT_DIR="${BASE_CHECKPOINT_DIR}/${TASK}"
-    if [ ! -d "$TASK_CHECKPOINT_DIR" ]; then
-        echo "Warning: Checkpoint directory $TASK_CHECKPOINT_DIR does not exist. Skipping $TASK."
-        continue
-    fi
-    if [ ! -f "${TASK_CHECKPOINT_DIR}/model.safetensors" ] && [ ! -f "${TASK_CHECKPOINT_DIR}/pytorch_model.bin" ]; then
-        echo "Warning: No final model file found in $TASK_CHECKPOINT_DIR. Skipping $TASK."
-        continue
-    fi
-    python test_ehrshot_classifier.py \
-        --checkpoint_dir "$TASK_CHECKPOINT_DIR" \
-        --task_name "$TASK" \
-        --batch_size 8 \
+for task_name in \
+    guo_los \
+    guo_readmission \
+    guo_icu \
+    lab_anemia \
+    lab_hyperkalemia \
+    lab_hyponatremia \
+    lab_hypoglycemia \
+    lab_thrombocytopenia \
+    new_acutemi \
+    new_celiac \
+    new_hyperlipidemia \
+    new_hypertension \
+    new_lupus \
+    new_pancan
+do
+    CUDA_VISIBLE_DEVICES=0 python test_ehrshot_classifier.py \
+        --data_dir /data/EHR_data_public/EHRSHOT \
+        --split_info_path /data/EHR_data_public/EHRSHOT/index/ehrshot_test.csv \
+        --embedding_cache /data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings.pt \
+        --checkpoint_dir "/data/zikun_workspace/checkpoints/ehrshot/classifier/${task_name}" \
+        --task_name "$task_name" \
+        --type_vocab_file /data/zikun_workspace/code/data/type_vocab.json \
+        --query_embedding_cache /data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt \
+        --query_llm_model_path /data/model_weights_public/BlueZeros/EHR-R1-1.7B \
+        --max_table_len 16384 \
+        --batch_size 32 \
         --max_eval_samples 1000
-        
-    echo "Finished testing ${TASK}."
-    echo ""
 done

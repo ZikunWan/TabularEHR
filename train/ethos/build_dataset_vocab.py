@@ -1,6 +1,8 @@
 import argparse
 import json
+import multiprocessing as mp
 import os
+import pickle
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -19,6 +21,7 @@ from dataset.ehrshot.ehrshot_dataset import EHRSHOTDataset
 from dataset.eicu.eicu_dataset import EICUDataset
 from dataset.mimic.mimic_dataset import MIMICIV
 from dataset.mimic_iv_cdm.mimic_iv_cdm_dataset import MIMICIVCDM
+from dataset.renji.renji_dataset import RenjiDataset
 from ethos.constants import SpecialToken as ST
 from ethos.vocabulary import Vocabulary
 
@@ -157,20 +160,157 @@ def _iter_samples(dataset, empty_token, max_samples, num_workers):
         yield _as_meds_df(sample, i + 1, empty_token)
 
 
-def _fit_stats(dataset, empty_token, max_samples, num_workers, num_buckets, min_numeric, max_text):
+def _accumulate_stats(df, nums, texts, raw_counts):
+    raw_counts.update(df["code"])
+
+    numeric = pd.to_numeric(df["numeric_value"], errors="coerce")
+    numeric_rows = df[numeric.notna()].assign(numeric_value=numeric[numeric.notna()].astype(float))
+    for code, values in numeric_rows.groupby("code")["numeric_value"]:
+        nums[str(code)].extend(values.tolist())
+
+    text = df["text_value"].fillna("").astype(str).str.strip()
+    text_rows = df[text != ""].assign(text_value=text[text != ""])
+    for code, values in text_rows.groupby("code")["text_value"]:
+        texts[str(code)].update(_norm_text(v) for v in values.tolist())
+
+
+def _collect_stats_for_indices(dataset, indices, empty_token):
+    nums, texts, raw_counts = defaultdict(list), defaultdict(Counter), Counter()
+    for idx in indices:
+        df = _as_meds_df(dataset[idx], idx + 1, empty_token)
+        _accumulate_stats(df, nums, texts, raw_counts)
+    return {
+        "nums": dict(nums),
+        "texts": {code: dict(counter) for code, counter in texts.items()},
+        "raw_counts": dict(raw_counts),
+    }
+
+
+_fit_stats_worker_context = None
+
+
+def _init_fit_stats_worker(dataset, empty_token):
+    global _fit_stats_worker_context
+    _fit_stats_worker_context = {
+        "dataset": dataset,
+        "empty_token": empty_token,
+    }
+
+
+def _fit_stats_worker(task):
+    start, end = task
+    partial = _collect_stats_for_indices(
+        _fit_stats_worker_context["dataset"],
+        range(start, end),
+        _fit_stats_worker_context["empty_token"],
+    )
+    partial["task"] = (start, end)
+    return partial
+
+
+def _merge_partial_stats(partial, nums, texts, raw_counts):
+    raw_counts.update(Counter(partial["raw_counts"]))
+    for code, values in partial["nums"].items():
+        nums[code].extend(values)
+    for code, counter in partial["texts"].items():
+        texts[code].update(Counter(counter))
+
+
+def _save_stats_checkpoint(checkpoint_path, completed_tasks, nums, texts, raw_counts, total, num_processes, process_chunk_size):
+    path = Path(checkpoint_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as f:
+        pickle.dump(
+            {
+                "completed_tasks": sorted(completed_tasks),
+                "nums": dict(nums),
+                "texts": {code: dict(counter) for code, counter in texts.items()},
+                "raw_counts": dict(raw_counts),
+                "total": total,
+                "num_processes": num_processes,
+                "process_chunk_size": process_chunk_size,
+            },
+            f,
+        )
+
+
+def _load_stats_checkpoint(checkpoint_path, nums, texts, raw_counts):
+    with Path(checkpoint_path).open("rb") as f:
+        checkpoint = pickle.load(f)
+    for code, values in checkpoint["nums"].items():
+        nums[code].extend(values)
+    for code, counter in checkpoint["texts"].items():
+        texts[code].update(Counter(counter))
+    raw_counts.update(Counter(checkpoint["raw_counts"]))
+    return {tuple(task) for task in checkpoint["completed_tasks"]}
+
+
+def _fit_stats(
+    dataset,
+    empty_token,
+    max_samples,
+    num_workers,
+    num_processes,
+    process_chunk_size,
+    checkpoint_path,
+    checkpoint_every_chunks,
+    num_buckets,
+    min_numeric,
+    max_text,
+):
     nums, texts, raw_counts = defaultdict(list), defaultdict(Counter), Counter()
     total = len(dataset) if max_samples is None else min(len(dataset), max_samples)
+    if total == 0:
+        return {}, {}, raw_counts
 
-    for df in tqdm(_iter_samples(dataset, empty_token, max_samples, num_workers), total=total, desc="Fit ETHOS vocab"):
-        raw_counts.update(df["code"])
-
-        numeric = pd.to_numeric(df["numeric_value"], errors="coerce")
-        for code, values in df[numeric.notna()].assign(numeric_value=numeric[numeric.notna()].astype(float)).groupby("code")["numeric_value"]:
-            nums[str(code)].extend(values.tolist())
-
-        text = df["text_value"].fillna("").astype(str).str.strip()
-        for code, values in df[text != ""].assign(text_value=text[text != ""]).groupby("code")["text_value"]:
-            texts[str(code)].update(_norm_text(v) for v in values.tolist())
+    if num_processes > 1:
+        tasks = [(start, min(total, start + process_chunk_size)) for start in range(0, total, process_chunk_size)]
+        completed_tasks = set()
+        if checkpoint_path and Path(checkpoint_path).exists():
+            completed_tasks = _load_stats_checkpoint(checkpoint_path, nums, texts, raw_counts)
+            print(f"Loaded checkpoint: {checkpoint_path} ({len(completed_tasks)} chunks completed)")
+        tasks = [task for task in tasks if task not in completed_tasks]
+        merged_since_checkpoint = 0
+        ctx = mp.get_context("fork")
+        with ctx.Pool(
+            processes=num_processes,
+            initializer=_init_fit_stats_worker,
+            initargs=(dataset, empty_token),
+        ) as pool:
+            for partial in tqdm(
+                pool.imap_unordered(_fit_stats_worker, tasks),
+                total=len(tasks),
+                desc=f"Fit ETHOS vocab ({num_processes} processes)",
+            ):
+                _merge_partial_stats(partial, nums, texts, raw_counts)
+                completed_tasks.add(tuple(partial["task"]))
+                merged_since_checkpoint += 1
+                if checkpoint_path and merged_since_checkpoint >= checkpoint_every_chunks:
+                    _save_stats_checkpoint(
+                        checkpoint_path,
+                        completed_tasks,
+                        nums,
+                        texts,
+                        raw_counts,
+                        total,
+                        num_processes,
+                        process_chunk_size,
+                    )
+                    merged_since_checkpoint = 0
+        if checkpoint_path:
+            _save_stats_checkpoint(
+                checkpoint_path,
+                completed_tasks,
+                nums,
+                texts,
+                raw_counts,
+                total,
+                num_processes,
+                process_chunk_size,
+            )
+    else:
+        for df in tqdm(_iter_samples(dataset, empty_token, max_samples, num_workers), total=total, desc="Fit ETHOS vocab"):
+            _accumulate_stats(df, nums, texts, raw_counts)
 
     quantiles = {}
     for code, values in nums.items():
@@ -293,11 +433,18 @@ def build_from_meds_dataset(
     empty_context_token="NO_EVENT_CONTEXT",
     max_samples=None,
     num_workers=0,
+    num_processes=1,
+    process_chunk_size=1000,
+    checkpoint_path=None,
+    checkpoint_every_chunks=5,
 ):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path_obj = Path(checkpoint_path).resolve() if checkpoint_path else None
     if overwrite_output:
         for path in output_dir.glob("*"):
+            if checkpoint_path_obj and path.resolve() == checkpoint_path_obj:
+                continue
             path.unlink()
 
     static_roots = [x.strip().upper() for x in static_prefixes.split(",") if x.strip()]
@@ -306,6 +453,10 @@ def build_from_meds_dataset(
         empty_context_token,
         max_samples,
         num_workers,
+        num_processes,
+        process_chunk_size,
+        checkpoint_path,
+        checkpoint_every_chunks,
         num_numeric_buckets,
         min_numeric_values_per_code,
         max_text_values_per_code,
@@ -329,6 +480,10 @@ def build_from_meds_dataset(
             "vocab_size": len(vocab),
             "static_roots": static_roots,
             "num_workers": num_workers,
+            "num_processes": num_processes,
+            "process_chunk_size": process_chunk_size,
+            "checkpoint_path": checkpoint_path,
+            "checkpoint_every_chunks": checkpoint_every_chunks,
         },
         (output_dir / "build_metadata.json").open("w", encoding="utf-8"),
         ensure_ascii=False,
@@ -396,12 +551,23 @@ def build_dataset(args):
             concept_map_dir=args.mimic_iv_cdm_concept_map_dir,
         )
 
+    if args.dataset_name == "renji":
+        return RenjiDataset(
+            root_dir=args.renji_root_dir,
+            split="train",
+            table_mode="text_only",
+            target_prediction_points=["day0", "day30", "day180", "day365"],
+            shuffle=False,
+            task_mode="multi_label",
+            return_meds=True,
+        )
+
     raise ValueError(f"Unsupported dataset_name: {args.dataset_name}")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_name", required=True, choices=["ehrshot", "eicu", "ehr_bench", "mimic_iv_cdm"])
+    parser.add_argument("--dataset_name", required=True, choices=["ehrshot", "eicu", "ehr_bench", "mimic_iv_cdm", "renji"])
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--overwrite_output", action="store_true")
     parser.add_argument("--ehrshot_root_dir", default="/data/EHR_data_public/EHRSHOT")
@@ -410,6 +576,7 @@ def main():
     parser.add_argument("--ehr_bench_data_dir", default="/data/zikun_workspace/mimic-iv-3.1_tabular")
     parser.add_argument("--mimic_iv_cdm_root_dir", default="/data/EHR_data_public/mimic-iv-cdm")
     parser.add_argument("--mimic_iv_cdm_concept_map_dir", default="/data/EHR_data_public/mimic-iv-3.1-meds/pre_MEDS")
+    parser.add_argument("--renji_root_dir", default="/data/EHR_data_public/Renji")
     parser.add_argument("--num_numeric_buckets", type=int, default=10)
     parser.add_argument("--min_numeric_values_per_code", type=int, default=20)
     parser.add_argument("--max_text_values_per_code", type=int, default=200)
@@ -418,6 +585,10 @@ def main():
     parser.add_argument("--empty_context_token", default="NO_EVENT_CONTEXT")
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument("--num_processes", type=int, default=1)
+    parser.add_argument("--process_chunk_size", type=int, default=1000)
+    parser.add_argument("--checkpoint_path", default=None)
+    parser.add_argument("--checkpoint_every_chunks", type=int, default=5)
     args = parser.parse_args()
 
     dataset = build_dataset(args)
@@ -434,6 +605,10 @@ def main():
         empty_context_token=args.empty_context_token,
         max_samples=args.max_samples,
         num_workers=args.num_workers,
+        num_processes=args.num_processes,
+        process_chunk_size=args.process_chunk_size,
+        checkpoint_path=args.checkpoint_path,
+        checkpoint_every_chunks=args.checkpoint_every_chunks,
     )
 
 

@@ -39,7 +39,7 @@ class ModelArguments:
 @dataclass
 class DataArguments:
     data_dir: str = field(
-        default="/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular",
+        default="/data/zikun_workspace/mimic-iv-3.1_tabular",
         metadata={"help": "Root directory for MIMIC-IV tabular data"}
     )
     task_name: str = field(
@@ -51,7 +51,7 @@ class DataArguments:
         metadata={"help": "Path to sample info CSV. If None, uses <data_dir>/task_index/test/<task_name>.csv"}
     )
     embedding_cache: str = field(
-        default="/home/ma-user/sfs_turbo/sai6/zkwan/mimic-iv-3.1_tabular/embeddings/table_text_embeddings.pt",
+        default="/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt",
         metadata={"help": "Path to pre-computed embedding cache"}
     )
     checkpoint_dir: str = field(default=None, metadata={"help": "Path to the checkpoint directory"})
@@ -59,11 +59,11 @@ class DataArguments:
     max_table_len: Optional[int] = field(default=None, metadata={"help": "Keep only the most recent N table rows before encoding"})
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
     type_vocab_file: str = field(
-        default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/data/type_vocab.json",
+        default="/data/zikun_workspace/code/data/type_vocab.json",
         metadata={"help": "Path to type vocabulary JSON file"}
     )
     query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt")
-    query_llm_model_path: str = field(default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/model_weights/BlueZeros/EHR-R1-1.7B")
+    query_llm_model_path: str = field(default="/data/model_weights_public/BlueZeros/EHR-R1-1.7B")
     query_max_length: int = field(default=512)
     seed: int = field(default=42, metadata={"help": "Random seed"})
     lazy_mode: bool = field(default=True, metadata={"help": "Load samples lazily from parquet to save memory"})

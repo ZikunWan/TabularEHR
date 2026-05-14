@@ -1,29 +1,15 @@
 #!/bin/bash
-# Evaluation script for Renji dataset
-# Works for both LoRA and full fine-tuning checkpoints.
-# test_renji.py auto-detects LoRA by checking for adapter_config.json.
+set -e
 
-CHECKPOINT_DIR="/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/renji_classifier_1d_full_with_0.3_ratio"
-SPLIT="test"
-BATCH_SIZE=32
-TASK_MODE="multi_task"
-SEED=42
+cd "$(dirname "$0")/../../test/Classifier"
 
-#TARGET_METRICS="ALT,AST,TB"
-#TARGET_POINTS="day14,day30"
-
-echo "================================================="
-echo "Evaluating checkpoint: $CHECKPOINT_DIR"
-echo "split=$SPLIT"
-echo "================================================="
-
-python test_renji.py \
-    --checkpoint_dir "$CHECKPOINT_DIR" \
-    --batch_size $BATCH_SIZE \
-    --task_mode $TASK_MODE \
-    --split $SPLIT \
-    --seed $SEED \
-    ${TARGET_METRICS:+--target_metrics $TARGET_METRICS} \
-    ${TARGET_POINTS:+--target_prediction_points $TARGET_POINTS}
-
-echo "Done. Results saved to: $CHECKPOINT_DIR"
+CUDA_VISIBLE_DEVICES=0 python test_renji_classifier.py \
+    --data_dir /data/EHR_data_public/Renji \
+    --embedding_cache /data/zikun_workspace/.cache/embeddings/renji/text_embeddings.pt \
+    --checkpoint_dir /data/zikun_workspace/checkpoints/renji/scratch \
+    --split test \
+    --type_vocab_file /data/zikun_workspace/code/data/type_vocab.json \
+    --query_embedding_cache /data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt \
+    --query_llm_model_path /data/model_weights_public/BlueZeros/EHR-R1-1.7B \
+    --max_table_len 16384 \
+    --batch_size 32

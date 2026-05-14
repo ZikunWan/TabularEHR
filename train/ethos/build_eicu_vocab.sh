@@ -8,5 +8,9 @@ python train/ethos/build_dataset_vocab.py \
   --eicu_root_dir /data/EHR_data_public/eicu-crd/2.0 \
   --eicu_processed_dir /data/zikun_workspace/eicu-crd/processed \
   --output_dir .cache/ethos_vocab/eicu \
-  --num_workers 8 \
+  --num_workers 0 \
+  --num_processes 8 \
+  --process_chunk_size 1000 \
+  --checkpoint_path .cache/ethos_vocab/eicu/checkpoint.pkl \
+  --checkpoint_every_chunks 5 \
   --overwrite_output

@@ -1,57 +1,37 @@
 #!/bin/bash
-cd /home/ma-user/modelarts/user-job-dir/LiverTransplantation/tabular/test/Classifier
+set -e
+export MIMIC_SKIP_SAMPLE_CACHE_CHECK=1
+cd "$(dirname "$0")/../../test/Classifier"
 
-TASKS=(
-    "ED_Hospitalization"
-    "ED_Inpatient_Mortality"
-    "ED_ICU_Tranfer_12hour"
-    "ED_Reattendance_3day"
-    "ED_Critical_Outcomes"
-    "Readmission_30day"
-    "Readmission_60day"
-    "Inpatient_Mortality"
-    "LengthOfStay_3day"
-    "LengthOfStay_7day"
-    "ICU_Mortality_1day"
-    "ICU_Mortality_2day"
-    "ICU_Mortality_3day"
-    "ICU_Mortality_7day"
-    "ICU_Mortality_14day"
-    "ICU_Stay_7day"
-    "ICU_Stay_14day"
-    "ICU_Readmission"
-)
-
-BASE_CHECKPOINT_DIR="/home/ma-user/sfs_turbo/sai6/zkwan/checkpoints/ehr_bench"
-CHECKPOINT_SUFFIX="_using_stage1_pretraining"
-AGGREGATE_FILE="${BASE_CHECKPOINT_DIR}/all_metrics${CHECKPOINT_SUFFIX}.csv"
-
-echo "task,auroc,auprc,accuracy,n_samples" > "$AGGREGATE_FILE"
-
-for TASK in "${TASKS[@]}"; do
-    echo "==================================="
-    echo "Evaluating EHR-Bench Task: $TASK"
-    echo "==================================="
-
-    TASK_CHECKPOINT_DIR="${BASE_CHECKPOINT_DIR}/${TASK}${CHECKPOINT_SUFFIX}"
-    if [ ! -d "$TASK_CHECKPOINT_DIR" ]; then
-        echo "Warning: Checkpoint directory $TASK_CHECKPOINT_DIR does not exist. Skipping."
-        continue
-    fi
-
+for task_name in \
+    ED_Hospitalization \
+    ED_Inpatient_Mortality \
+    ED_ICU_Tranfer_12hour \
+    ED_Reattendance_3day \
+    ED_Critical_Outcomes \
+    Readmission_30day \
+    Readmission_60day \
+    Inpatient_Mortality \
+    LengthOfStay_3day \
+    LengthOfStay_7day \
+    ICU_Mortality_1day \
+    ICU_Mortality_2day \
+    ICU_Mortality_3day \
+    ICU_Mortality_7day \
+    ICU_Mortality_14day \
+    ICU_Stay_7day \
+    ICU_Stay_14day \
+    ICU_Readmission
+do
     CUDA_VISIBLE_DEVICES=0 python test_ehr_bench_classifier.py \
-        --checkpoint_dir "$TASK_CHECKPOINT_DIR" \
-        --task_name "$TASK" \
+        --data_dir /data/zikun_workspace/mimic-iv-3.1_tabular \
+        --sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/test/${task_name}.csv" \
+        --embedding_cache /data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt \
+        --checkpoint_dir "/data/zikun_workspace/checkpoints/ehr_bench/${task_name}/table_encoder/llm_query_scratch" \
+        --task_name "$task_name" \
+        --type_vocab_file /data/zikun_workspace/code/data/type_vocab.json \
+        --query_embedding_cache /data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt \
+        --query_llm_model_path /data/model_weights_public/BlueZeros/EHR-R1-1.7B \
+        --max_table_len 16384 \
         --batch_size 64
-
-    METRICS_FILE="${TASK_CHECKPOINT_DIR}/test_results_metrics.csv"
-    if [ -f "$METRICS_FILE" ]; then
-        tail -n +2 "$METRICS_FILE" >> "$AGGREGATE_FILE"
-    else
-        echo "Warning: Metrics file not found: $METRICS_FILE"
-    fi
 done
-
-echo "==================================="
-echo "All done! Aggregate metrics saved to $AGGREGATE_FILE"
-cat "$AGGREGATE_FILE" | column -s, -t
