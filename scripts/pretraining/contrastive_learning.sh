@@ -1,12 +1,27 @@
 deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
     --deepspeed "./ds_config_zero2.json" \
+    --dataset mimic_iv eicu ehrshot \
+    --sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv" \
+    --val_sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val/next_token_prediction.csv" \
+    --table_text_embedding "/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt" \
+    --markdown_embedding_path "/data/zikun_workspace/mimic-iv-3.1_tabular/embeddings/table_free_text/embeddings.pt" \
+    --eicu_sample_info_path "/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_train.json" \
+    --eicu_val_sample_info_path "/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_val.json" \
+    --eicu_table_text_embedding "/data/zikun_workspace/.cache/embeddings/eicu/text_embeddings_stage2.pt" \
+    --eicu_markdown_embedding_path "/data/zikun_workspace/eicu-crd/processed/pretraining_markdown_embeddings/embeddings.pt" \
+    --ehrshot_sample_info_path "/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_train.csv" \
+    --ehrshot_val_sample_info_path "/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_val.csv" \
+    --ehrshot_table_text_embedding "/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings_stage2.pt" \
+    --ehrshot_markdown_embedding_path "/data/EHR_data_public/EHRSHOT/pretraining_markdown_embeddings/embeddings.pt" \
     --markdown_candidate_count 1024 \
-    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction" \
+    --view_keep_ratio 0.40 \
+    --max_view_overlap_ratio 0.10 \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction_mimic_eicu_ehrshot" \
     --max_table_len 4096 \
     --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 1 \
-    --dataloader_num_workers 32 \
+    --dataloader_num_workers 8 \
     --learning_rate 1e-5 \
     --temperature 0.07 \
     --warmup_steps 100 \
@@ -19,4 +34,4 @@ deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
     --save_total_limit 1 \
     --wandb_project "Contrastive_Learning" \
     --run_name "contrastive_learning_table_aug_markdown_bank_1d" \
-    --output_dir "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning"
+    --output_dir "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning_mimic_eicu_ehrshot"

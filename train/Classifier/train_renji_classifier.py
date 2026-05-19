@@ -17,14 +17,22 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.append(project_root)
 
 def rank0_print(*args, **kwargs):
+    rank = os.environ.get("RANK")
+    if rank is not None:
+        if int(rank) == 0:
+            print(*args, **kwargs)
+        return
+
     local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
     if local_rank in [-1, 0]:
         print(*args, **kwargs)
 
 
 def quiet_non_main_process_logs():
+    rank = os.environ.get("RANK")
     local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
-    if local_rank not in [-1, 0]:
+    is_non_main = int(rank) != 0 if rank is not None else local_rank not in [-1, 0]
+    if is_non_main:
         hf_logging.set_verbosity_error()
         logging.getLogger("transformers").setLevel(logging.ERROR)
         logging.getLogger("accelerate").setLevel(logging.ERROR)
@@ -163,7 +171,8 @@ def main():
                 modules_to_save=["classifier", "query_head"],
             )
             model = get_peft_model(model, lora_cfg)
-        model.print_trainable_parameters()
+        if training_args.process_index == 0:
+            model.print_trainable_parameters()
 
     trainer = Trainer(
         model=model, args=training_args,

@@ -100,7 +100,7 @@ class DataArguments:
 @dataclass
 class CustomTrainingArguments(TrainingArguments):
     wandb_project: Optional[str] = field(default="eICU-Classifier", metadata={"help": "W&B project name."})
-    early_stopping_patience: int = field(default=5, metadata={"help": "Number of eval steps with no improvement before stopping. Set to 0 to disable."})
+    early_stopping_patience: int = field(default=10, metadata={"help": "Number of eval steps with no improvement before stopping. Set to 0 to disable."})
 
 
 def main():
@@ -122,7 +122,7 @@ def main():
     training_args.save_steps = 100
     training_args.save_total_limit = 1
     training_args.bf16 = True
-    training_args.dataloader_num_workers = 16
+    training_args.dataloader_num_workers = 32
     training_args.remove_unused_columns = False
     
     # Enforce safetensors saving and best model logic
@@ -267,7 +267,7 @@ def main():
         callbacks.append(EarlyStoppingCallback(early_stopping_patience=training_args.early_stopping_patience))
         rank0_print(f"Early stopping enabled with patience={training_args.early_stopping_patience}")
 
-    base_run_name = training_args.run_name or "eicu"
+    base_run_name = training_args.run_name
     training_args.run_name = f"{base_run_name}__{data_args.task_name}"
 
     trainer_cls = Trainer

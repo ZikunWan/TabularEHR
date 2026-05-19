@@ -16,6 +16,20 @@ if PROJECT_ROOT not in sys.path:
 from dataset.renji.task_info import get_task_info
 
 
+def _is_main_process():
+    rank = os.environ.get("RANK")
+    if rank is not None:
+        return int(rank) == 0
+
+    local_rank = os.environ.get("LOCAL_RANK")
+    return local_rank is None or int(local_rank) == 0
+
+
+def _rank0_print(*args, **kwargs):
+    if _is_main_process():
+        print(*args, **kwargs)
+
+
 class RenjiDataset(Dataset):
     """
     Renji Pediatric Liver Transplant Dataset.
@@ -578,7 +592,7 @@ class RenjiDataset(Dataset):
     def _get_first_drug_days(self, df_followup):
         first_drug_days = {}
         for lab_item, med_cols in self.DRUG_CONC_MED_COLS.items():
-            first_day = None
+            first_drug_day = None
             for _, row in df_followup.iterrows():
                 day = self._postop_day_value(row['术后天数'])
 
@@ -588,10 +602,19 @@ class RenjiDataset(Dataset):
                     if med_col in df_followup.columns
                 )
                 if has_drug:
-                    first_day = day
+                    first_drug_day = day
                     break
 
-            first_drug_days[lab_item] = first_day
+            first_conc_day = None
+            if lab_item in df_followup.columns:
+                for _, row in df_followup.iterrows():
+                    value = row[lab_item]
+                    if pd.notna(value) and str(value).strip() != '':
+                        first_conc_day = self._postop_day_value(row['术后天数'])
+                        break
+
+            first_days = [day for day in [first_drug_day, first_conc_day] if day is not None]
+            first_drug_days[lab_item] = min(first_days) if first_days else None
 
         return first_drug_days
 
@@ -602,6 +625,7 @@ class RenjiDataset(Dataset):
             raise ValueError(f"No first drug day for {lab_item}")
 
         elapsed_days = current_day - first_day
+
         for day_min, day_max, low, high in self.DRUG_CONC_RANGES[lab_item]:
             if day_min <= elapsed_days <= day_max:
                 return low, high, unit, f"{low} - {high}"
@@ -770,7 +794,7 @@ class RenjiDataset(Dataset):
         for _, row in self.patient_info_df.iterrows():
             key = os.path.splitext(str(row['file_name']))[0]
             self.patient_info_map[key] = row
-        print(f"Loaded patient info: {len(self.patient_info_map)} patients")
+        _rank0_print(f"Loaded patient info: {len(self.patient_info_map)} patients")
 
     def _build_index(self):
         """
@@ -778,7 +802,7 @@ class RenjiDataset(Dataset):
         - 'single': One sample per (patient, prediction_point, metric)
         - 'multi_task': One sample per (patient, prediction_point)
         """
-        print(f"[{self.split}] Building sample index (mode={self.task_mode})...")
+        _rank0_print(f"[{self.split}] Building sample index (mode={self.task_mode})...")
         
         # Determine which prediction points to use
         active_points = self.target_prediction_points or list(self.PREDICTION_POINTS.keys())
@@ -797,7 +821,7 @@ class RenjiDataset(Dataset):
                     metrics_by_window[window] = set()
                 metrics_by_window[window].add(metric)
         
-        for fname in tqdm(self.filenames, desc=f"[{self.split}] Indexing"):
+        for fname in tqdm(self.filenames, desc=f"[{self.split}] Indexing", disable=not _is_main_process()):
             # Get filename without extension
             fname_key = os.path.splitext(fname)[0] if fname.endswith(('.xlsx')) else fname
             
@@ -932,30 +956,30 @@ class RenjiDataset(Dataset):
         """Print dataset statistics."""
         from collections import Counter
         
-        print(f"\n[{self.split}] === Dataset Statistics ===")
-        print(f"Total samples: {len(samples)}")
+        _rank0_print(f"\n[{self.split}] === Dataset Statistics ===")
+        _rank0_print(f"Total samples: {len(samples)}")
         
         # By prediction point
         point_dist = Counter(s['prediction_point'] for s in samples)
-        print(f"\nBy prediction point:")
+        _rank0_print(f"\nBy prediction point:")
         for point, count in sorted(point_dist.items()):
-            print(f"  {point}: {count}")
+            _rank0_print(f"  {point}: {count}")
         
         # By metric (top 10) - checks if 'metric' exists
         if samples and 'metric' in samples[0]:
             metric_dist = Counter(s['metric'] for s in samples)
-            print(f"\nTop 10 metrics:")
+            _rank0_print(f"\nTop 10 metrics:")
             for metric, count in metric_dist.most_common(10):
-                print(f"  {metric}: {count}")
+                _rank0_print(f"  {metric}: {count}")
         
         # Label distribution - checks if 'label_val' exists
         if samples and 'label_val' in samples[0]:
             label_0 = sum(1 for s in samples if s['label_val'] == 0)
             label_1 = sum(1 for s in samples if s['label_val'] == 1)
             if label_0 > 0:
-                print(f"\nLabel distribution: 0={label_0}, 1={label_1}, ratio={label_1/(label_0):.2f}")
+                _rank0_print(f"\nLabel distribution: 0={label_0}, 1={label_1}, ratio={label_1/(label_0):.2f}")
             else:
-                print(f"\nLabel distribution: 0={label_0}, 1={label_1}")
+                _rank0_print(f"\nLabel distribution: 0={label_0}, 1={label_1}")
 
     def _load_followup_data(self, sample):
         """Load and filter follow-up data for a sample."""
@@ -1209,7 +1233,7 @@ class RenjiDataset(Dataset):
                             self._describe_lab_value(
                                 row['Item'],
                                 row['Value'],
-                                age_years if age_years else 5.0,
+                                age_years,
                                 gender,
                                 postop_day=row['术后天数'],
                                 first_drug_days=first_drug_days,

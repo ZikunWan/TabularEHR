@@ -518,6 +518,28 @@ class EICUDataset(Dataset):
 
     def _process_item(self, index):
         sample = self.sample_info[index]
+        if sample.get("task") == "pretraining_context":
+            context = self.free_text_input_process(sample)
+            output_sample = {
+                "idx": index,
+                "input": context,
+                "output": "",
+                "task_info": {"task": "pretraining_context"},
+                "instruction": "",
+            }
+            if self.table_mode in {"table_only", "table_plus_rest_text"}:
+                measurement_df = self.structed_EHR_input_process(sample)
+                output_sample["measurement_table"] = measurement_df
+                output_sample["table_length"] = len(measurement_df)
+                if self.table_mode == "table_plus_rest_text":
+                    output_sample["remaining_text"] = self.free_text_input_process(
+                        sample,
+                        include_table_sections=False,
+                        include_table_demographics=False,
+                        include_extra_demographics=True,
+                    )
+            return output_sample
+
         label = sample["label"]
 
         context = self.free_text_input_process(sample)

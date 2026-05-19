@@ -6,5 +6,5 @@ wandb/
 __pycache__/
 *.py[cod]
 *.so
-
+.data
 .DS_Store

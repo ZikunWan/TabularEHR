@@ -27,11 +27,12 @@ do
         --data_dir /data/zikun_workspace/mimic-iv-3.1_tabular \
         --sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/test/${task_name}.csv" \
         --embedding_cache /data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt \
-        --checkpoint_dir "/data/zikun_workspace/checkpoints/ehr_bench/${task_name}/table_encoder/llm_query_scratch" \
+        --checkpoint_dir "/data/zikun_workspace/checkpoints/ehr_bench/${task_name}/table_encoder/llm_query_next_token" \
         --task_name "$task_name" \
         --type_vocab_file /data/zikun_workspace/code/data/type_vocab.json \
         --query_embedding_cache /data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt \
         --query_llm_model_path /data/model_weights_public/BlueZeros/EHR-R1-1.7B \
         --max_table_len 16384 \
-        --batch_size 64
+        --batch_size 64 \
+        --pretrained_path /data/zikun_workspace/checkpoints/pretraining/next_token_prediction
 done

@@ -1,10 +1,34 @@
 import builtins
 import json
+import logging
 import os
 import random
 import sys
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional
+
+
+def _is_main_process() -> bool:
+    rank = os.environ.get("RANK")
+    if rank is not None:
+        return int(rank) == 0
+    local_rank = os.environ.get("LOCAL_RANK")
+    return local_rank is None or int(local_rank) in (-1, 0)
+
+
+def _configure_non_main_process_logging() -> None:
+    if _is_main_process():
+        return
+
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("ACCELERATE_LOG_LEVEL", "error")
+    logging.basicConfig(level=logging.ERROR, force=True)
+    logging.getLogger().setLevel(logging.ERROR)
+    for logger_name in ("transformers", "accelerate", "deepspeed", "torch", "torch.distributed"):
+        logging.getLogger(logger_name).setLevel(logging.ERROR)
+
+
+_configure_non_main_process_logging()
 
 import pandas as pd
 import torch
@@ -18,18 +42,14 @@ from transformers import EarlyStoppingCallback, HfArgumentParser, PreTrainedMode
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
+from dataset.ehrshot.ehrshot_dataset import EHRSHOTDataset
+from dataset.eicu.eicu_dataset import EICUDataset
 from dataset.mimic.mimic_dataset import MIMICIV
 from models.TableEncoder.adapter import QFormerAdapter
 from models.TableEncoder.config import LongTableEncoder1DConfig
 from models.TableEncoder.encoder import LongTableEncoder1D
 from utils.collate import build_table_token_tensors
-from utils.load_embedding import (
-    build_embedding_matrix,
-    build_text_to_idx,
-    build_vocab_keys,
-    get_special_token_indices,
-    load_embedding_cache,
-)
+from utils.load_embedding import build_text_to_idx
 from utils.weight_loader import load_model_weights
 
 
@@ -91,6 +111,7 @@ def all_gather_with_grad(tensor: torch.Tensor):
 
 @dataclass
 class DataArguments:
+    dataset: List[str] = field(default_factory=lambda: ["mimic_iv"])
     root_dir: str = field(default="/data/zikun_workspace/mimic-iv-3.1_tabular")
     sample_info_path: str = field(
         default="/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv"
@@ -98,11 +119,30 @@ class DataArguments:
     val_sample_info_path: str = field(
         default="/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val/next_token_prediction.csv"
     )
-    table_text_embedding: str = field(
-        default="/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt"
+    table_text_embedding: List[str] = field(
+        default_factory=lambda: ["/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt"]
     )
-    markdown_embedding_path: str = field(
-        default="/data/zikun_workspace/mimic-iv-3.1_tabular/embeddings/table_free_text/embeddings.pt"
+    markdown_embedding_path: List[str] = field(
+        default_factory=lambda: ["/data/zikun_workspace/mimic-iv-3.1_tabular/embeddings/table_free_text/embeddings.pt"]
+    )
+    eicu_root_dir: str = field(default="/data/zikun_workspace/eicu-crd")
+    eicu_processed_dir: str = field(default="/data/zikun_workspace/eicu-crd/processed")
+    eicu_sample_info_path: str = field(default="/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_train.json")
+    eicu_val_sample_info_path: str = field(default="/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_val.json")
+    eicu_table_text_embedding: List[str] = field(
+        default_factory=lambda: ["/data/zikun_workspace/.cache/embeddings/eicu/text_embeddings_stage2.pt"]
+    )
+    eicu_markdown_embedding_path: List[str] = field(
+        default_factory=lambda: ["/data/zikun_workspace/eicu-crd/processed/pretraining_markdown_embeddings/embeddings.pt"]
+    )
+    ehrshot_root_dir: str = field(default="/data/EHR_data_public/EHRSHOT")
+    ehrshot_sample_info_path: str = field(default="/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_train.csv")
+    ehrshot_val_sample_info_path: str = field(default="/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_val.csv")
+    ehrshot_table_text_embedding: List[str] = field(
+        default_factory=lambda: ["/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings_stage2.pt"]
+    )
+    ehrshot_markdown_embedding_path: List[str] = field(
+        default_factory=lambda: ["/data/EHR_data_public/EHRSHOT/pretraining_markdown_embeddings/embeddings.pt"]
     )
     markdown_candidate_count: int = field(default=1024)
     type_vocab_file: str = field(default="/data/zikun_workspace/code/data/type_vocab.json")
@@ -111,10 +151,8 @@ class DataArguments:
     max_eval_samples: Optional[int] = field(default=None)
     max_table_len: Optional[int] = field(default=16384)
     min_table_rows: int = field(default=2)
-    table_drop_ratio: float = field(default=0.15)
-    time_window_ratio: float = field(default=0.85)
-    value_mask_ratio: float = field(default=0.10)
-    unit_mask_ratio: float = field(default=0.10)
+    view_keep_ratio: float = field(default=0.40)
+    max_view_overlap_ratio: float = field(default=0.10)
     augmentation_seed: int = field(default=42)
     temperature: float = field(default=0.07)
 
@@ -171,15 +209,33 @@ class ContrastiveModel(PreTrainedModel):
         self,
         config: LongTableEncoder1DConfig,
         embedding_matrix: torch.Tensor,
+        markdown_embedding_matrix: Optional[torch.Tensor] = None,
         temperature: float = 0.07,
     ):
         super().__init__(config)
         self.encoder = LongTableEncoder1D(config)
         self.adapter = QFormerAdapter(config)
         self.temperature = temperature
-        self.text_embedding = nn.Embedding.from_pretrained(embedding_matrix, freeze=True)
+        self.text_embedding_matrix = embedding_matrix.cpu()
+        self.markdown_embedding_matrix = markdown_embedding_matrix.cpu() if markdown_embedding_matrix is not None else None
         pool_hidden_size = config.dim_out if config.dim_out is not None else config.dim
         self.table_pooling = AttentionPooling(pool_hidden_size)
+
+    def lookup_text_embeddings(self, token_ids: torch.Tensor, dtype: torch.dtype, device: torch.device):
+        original_shape = token_ids.shape
+        flat_ids = token_ids.reshape(-1).cpu()
+        selected = self.text_embedding_matrix.index_select(0, flat_ids)
+        selected = selected.to(device=device, dtype=dtype, non_blocking=True)
+        return selected.view(*original_shape, selected.shape[-1])
+
+    def lookup_markdown_embeddings(self, markdown_candidate_indices: torch.Tensor, dtype: torch.dtype, device: torch.device):
+        if self.markdown_embedding_matrix is None:
+            raise ValueError("markdown_embedding_matrix is required when markdown_candidate_indices are provided.")
+        original_shape = markdown_candidate_indices.shape
+        flat_indices = markdown_candidate_indices.reshape(-1).cpu()
+        selected = self.markdown_embedding_matrix.index_select(0, flat_indices)
+        selected = selected.to(device=device, dtype=dtype, non_blocking=True)
+        return selected.view(*original_shape, selected.shape[-1])
 
     def encode_table(
         self,
@@ -192,9 +248,11 @@ class ContrastiveModel(PreTrainedModel):
         seq_mask=None,
         type_ids=None,
     ):
-        item_emb = self.text_embedding(item_ids)
-        unit_emb = self.text_embedding(unit_ids)
-        value_emb = self.text_embedding(value_text_ids)
+        embedding_dtype = self.encoder.embedding.item_proj.weight.dtype
+        embedding_device = self.encoder.embedding.item_proj.weight.device
+        item_emb = self.lookup_text_embeddings(item_ids, dtype=embedding_dtype, device=embedding_device)
+        unit_emb = self.lookup_text_embeddings(unit_ids, dtype=embedding_dtype, device=embedding_device)
+        value_emb = self.lookup_text_embeddings(value_text_ids, dtype=embedding_dtype, device=embedding_device)
         hidden_states, hidden_mask = self.encoder(
             item_emb=item_emb,
             unit_emb=unit_emb,
@@ -209,7 +267,15 @@ class ContrastiveModel(PreTrainedModel):
         query_embeddings = self.adapter(hidden_states, hidden_mask)
         return self.table_pooling(query_embeddings)
 
-    def forward(self, positive_, markdown_embeddings=None, markdown_labels=None, subject_ids=None, **anchor_inputs):
+    def forward(
+        self,
+        positive_,
+        markdown_embeddings=None,
+        markdown_candidate_indices=None,
+        markdown_labels=None,
+        subject_ids=None,
+        **anchor_inputs,
+    ):
         anchor_emb = F.normalize(self.encode_table(**anchor_inputs), dim=-1)
         positive_emb = F.normalize(self.encode_table(**positive_), dim=-1)
 
@@ -222,6 +288,12 @@ class ContrastiveModel(PreTrainedModel):
             recall1 = (aug_logits.argmax(dim=1) == labels).float().mean()
 
         markdown_positive_emb = None
+        if markdown_candidate_indices is not None:
+            markdown_embeddings = self.lookup_markdown_embeddings(
+                markdown_candidate_indices,
+                dtype=anchor_emb.dtype,
+                device=anchor_emb.device,
+            )
         if markdown_embeddings is not None:
             markdown_emb = F.normalize(markdown_embeddings.to(anchor_emb.dtype), dim=-1)
             markdown_logits = torch.einsum("bd,bkd->bk", anchor_emb, markdown_emb) / self.temperature
@@ -250,26 +322,34 @@ class ContrastiveModel(PreTrainedModel):
 
 
 class ContrastiveDataset(Dataset):
-    def __init__(self, base_dataset, is_eval: bool = False):
-        self.base_dataset = base_dataset
+    def __init__(self, base_datasets, is_eval: bool = False):
+        self.base_datasets = base_datasets
         self.is_eval = is_eval
+        self.index = []
+        for dataset_idx, (_, dataset) in enumerate(self.base_datasets):
+            for sample_idx in range(len(dataset)):
+                self.index.append((dataset_idx, sample_idx))
 
     def __len__(self):
-        return len(self.base_dataset)
+        return len(self.index)
 
     def __getitem__(self, idx):
-        sample = self.base_dataset[idx]
-        sample_info = self.base_dataset.sample_info[idx]
+        dataset_idx, sample_idx = self.index[idx]
+        dataset_name, dataset = self.base_datasets[dataset_idx]
+        sample = dataset[sample_idx]
+        sample_info = dataset.sample_info[sample_idx]
         return {
             "table": sample.get("measurement_table"),
             "sample_key": build_sample_key(sample_info),
-            "subject_id": str(sample_info.get("subject_id", "")),
+            "subject_id": build_subject_id(dataset_name, sample_info),
             "idx": idx,
             "is_eval": self.is_eval,
         }
 
 
 def build_sample_key(sample_info):
+    if "sample_id" in sample_info:
+        return str(sample_info["sample_id"])
     return (
         f"{sample_info.get('subject_id', '')}|"
         f"{sample_info.get('context_begin', '')}|"
@@ -277,67 +357,58 @@ def build_sample_key(sample_info):
     )
 
 
+def build_subject_id(dataset_name, sample_info):
+    if dataset_name == "mimic_iv":
+        return str(sample_info.get("subject_id", ""))
+    return str(sample_info.get("patient_id", ""))
+
+
 def normalize_markdown_embedding_keys(markdown_embeddings):
     normalized_embeddings = {}
     for key, value in markdown_embeddings.items():
         parts = str(key).split("|")
-        normalized_key = f"{parts[0]}|{parts[2]}|{parts[3]}"
+        if len(parts) >= 4 and parts[1] == "contrastive_learning":
+            normalized_key = f"{parts[0]}|{parts[2]}|{parts[3]}"
+        else:
+            normalized_key = str(key)
         normalized_embeddings[normalized_key] = value
     return normalized_embeddings
 
 
-def augment_table(
+def markdown_subject_id(key):
+    parts = str(key).split("|")
+    if parts[0] in {"eicu", "ehrshot"}:
+        return parts[1]
+    return parts[0]
+
+
+def sample_low_overlap_views(
     table: pd.DataFrame,
-    drop_ratio: float,
-    time_window_ratio: float,
-    value_mask_ratio: float,
-    unit_mask_ratio: float,
+    view_keep_ratio: float,
+    max_view_overlap_ratio: float,
     min_table_rows: int,
     rng: random.Random,
 ):
     table = table.reset_index(drop=True)
-    if len(table) <= min_table_rows:
-        return table
+    keep_count = int(round(len(table) * view_keep_ratio))
+    keep_count = max(min_table_rows, min(len(table), keep_count))
 
-    augmentation_type = rng.choice(["time_window", "row_drop", "value_mask", "unit_mask", "time_shuffle"])
+    anchor_indices = sorted(rng.sample(range(len(table)), keep_count))
+    anchor_set = set(anchor_indices)
+    remaining_indices = [idx for idx in range(len(table)) if idx not in anchor_set]
 
-    if augmentation_type == "time_window" and time_window_ratio < 1.0:
-        keep_count = int(round(len(table) * time_window_ratio))
-        keep_count = max(min_table_rows, min(len(table), keep_count))
-        start_idx = rng.randrange(0, len(table) - keep_count + 1)
-        return table.iloc[start_idx:start_idx + keep_count].reset_index(drop=True)
+    min_overlap_count = max(0, keep_count - len(remaining_indices))
+    requested_overlap_count = int(round(keep_count * max_view_overlap_ratio))
+    overlap_count = max(min_overlap_count, min(keep_count, requested_overlap_count))
 
-    if augmentation_type == "row_drop":
-        keep_count = int(round(len(table) * (1.0 - drop_ratio)))
-        keep_count = max(min_table_rows, min(len(table), keep_count))
-        keep_indices = sorted(rng.sample(range(len(table)), keep_count))
-        return table.iloc[keep_indices].reset_index(drop=True)
+    overlap_indices = rng.sample(anchor_indices, overlap_count) if overlap_count > 0 else []
+    non_overlap_count = keep_count - overlap_count
+    non_overlap_indices = rng.sample(remaining_indices, non_overlap_count) if non_overlap_count > 0 else []
+    positive_indices = sorted(overlap_indices + non_overlap_indices)
 
-    if augmentation_type == "value_mask" and value_mask_ratio > 0 and "Value" in table.columns:
-        mask_count = int(round(len(table) * value_mask_ratio))
-        mask_count = min(len(table), mask_count)
-        if mask_count > 0:
-            mask_indices = rng.sample(range(len(table)), mask_count)
-            table.loc[mask_indices, "Value"] = pd.NA
-        return table
-
-    if augmentation_type == "unit_mask" and unit_mask_ratio > 0 and "Unit" in table.columns:
-        mask_count = int(round(len(table) * unit_mask_ratio))
-        mask_count = min(len(table), mask_count)
-        if mask_count > 0:
-            mask_indices = rng.sample(range(len(table)), mask_count)
-            table.loc[mask_indices, "Unit"] = pd.NA
-        return table
-
-    if augmentation_type == "time_shuffle" and "Time" in table.columns:
-        shuffled_indices = []
-        for _, group in table.groupby("Time", sort=False):
-            group_indices = group.index.tolist()
-            rng.shuffle(group_indices)
-            shuffled_indices.extend(group_indices)
-        return table.loc[shuffled_indices].reset_index(drop=True)
-
-    return table
+    anchor_view = table.iloc[anchor_indices].reset_index(drop=True)
+    positive_view = table.iloc[positive_indices].reset_index(drop=True)
+    return anchor_view, positive_view
 
 
 class ContrastiveDataCollator:
@@ -348,11 +419,11 @@ class ContrastiveDataCollator:
         type_vocab: dict[str, int],
         max_table_len: Optional[int],
         min_table_rows: int,
-        table_drop_ratio: float,
-        time_window_ratio: float,
-        value_mask_ratio: float,
-        unit_mask_ratio: float,
-        markdown_embeddings: dict[str, torch.Tensor],
+        view_keep_ratio: float,
+        max_view_overlap_ratio: float,
+        markdown_key_to_idx: dict[str, int],
+        markdown_keys: List[str],
+        markdown_subject_ids: List[str],
         markdown_candidate_count: int,
         augmentation_seed: int,
     ):
@@ -363,56 +434,55 @@ class ContrastiveDataCollator:
         self.type_vocab = type_vocab
         self.max_table_len = max_table_len
         self.min_table_rows = min_table_rows
-        self.table_drop_ratio = table_drop_ratio
-        self.time_window_ratio = time_window_ratio
-        self.value_mask_ratio = value_mask_ratio
-        self.unit_mask_ratio = unit_mask_ratio
-        self.markdown_embeddings = markdown_embeddings
-        self.markdown_keys = list(markdown_embeddings.keys())
-        self.markdown_subject_ids = {key: str(key).split("|", 1)[0] for key in self.markdown_keys}
+        self.view_keep_ratio = view_keep_ratio
+        self.max_view_overlap_ratio = max_view_overlap_ratio
+        self.markdown_key_to_idx = markdown_key_to_idx
+        self.markdown_keys = markdown_keys
+        self.markdown_subject_ids = markdown_subject_ids
         self.markdown_candidate_count = markdown_candidate_count
         self.augmentation_seed = augmentation_seed
 
     def sample_markdown_candidates(self, sample_key: str, subject_id: str, rng: random.Random):
-        candidate_keys = [sample_key]
-        seen_keys = {sample_key}
+        positive_idx = self.markdown_key_to_idx[sample_key]
+        candidate_indices = [positive_idx]
+        seen_indices = {positive_idx}
         target_negative_count = self.markdown_candidate_count - 1
         max_attempts = target_negative_count * 10 + 100
 
         attempts = 0
-        while len(candidate_keys) < self.markdown_candidate_count and attempts < max_attempts:
-            key = self.markdown_keys[rng.randrange(len(self.markdown_keys))]
+        while len(candidate_indices) < self.markdown_candidate_count and attempts < max_attempts:
+            candidate_idx = rng.randrange(len(self.markdown_keys))
             attempts += 1
-            if key in seen_keys:
+            if candidate_idx in seen_indices:
                 continue
-            if self.markdown_subject_ids[key] == subject_id:
+            if self.markdown_subject_ids[candidate_idx] == subject_id:
                 continue
-            candidate_keys.append(key)
-            seen_keys.add(key)
+            candidate_indices.append(candidate_idx)
+            seen_indices.add(candidate_idx)
 
-        if len(candidate_keys) < self.markdown_candidate_count:
-            for key in self.markdown_keys:
-                if key in seen_keys:
+        if len(candidate_indices) < self.markdown_candidate_count:
+            for candidate_idx in range(len(self.markdown_keys)):
+                if candidate_idx in seen_indices:
                     continue
-                if self.markdown_subject_ids[key] == subject_id:
+                if self.markdown_subject_ids[candidate_idx] == subject_id:
                     continue
-                candidate_keys.append(key)
-                seen_keys.add(key)
-                if len(candidate_keys) == self.markdown_candidate_count:
+                candidate_indices.append(candidate_idx)
+                seen_indices.add(candidate_idx)
+                if len(candidate_indices) == self.markdown_candidate_count:
                     break
 
-        if len(candidate_keys) < self.markdown_candidate_count:
+        if len(candidate_indices) < self.markdown_candidate_count:
             raise ValueError(
-                f"Only found {len(candidate_keys)} markdown candidates for subject_id={subject_id}; "
+                f"Only found {len(candidate_indices)} markdown candidates for subject_id={subject_id}; "
                 f"required {self.markdown_candidate_count}."
             )
 
-        return torch.stack([self.markdown_embeddings[key] for key in candidate_keys])
+        return torch.tensor(candidate_indices, dtype=torch.long)
 
     def __call__(self, batch):
         anchor_tables = []
         positive_tables = []
-        markdown_embeddings = []
+        markdown_candidate_indices = []
         markdown_labels = []
         subject_ids = []
 
@@ -421,32 +491,29 @@ class ContrastiveDataCollator:
             if table is None or table.empty:
                 continue
             sample_key = item["sample_key"]
-            if sample_key not in self.markdown_embeddings:
+            if sample_key not in self.markdown_key_to_idx:
                 continue
             if self.max_table_len is not None:
                 table = table.tail(self.max_table_len).reset_index(drop=True)
             if len(table) < self.min_table_rows:
                 continue
 
-            anchor_tables.append(table)
             subject_ids.append(item["subject_id"])
             if item["is_eval"]:
                 rng = random.Random(self.augmentation_seed + int(item["idx"]))
             else:
                 rng = random
-            markdown_embeddings.append(self.sample_markdown_candidates(sample_key, item["subject_id"], rng))
-            markdown_labels.append(0)
-            positive_tables.append(
-                augment_table(
-                    table,
-                    drop_ratio=self.table_drop_ratio,
-                    time_window_ratio=self.time_window_ratio,
-                    value_mask_ratio=self.value_mask_ratio,
-                    unit_mask_ratio=self.unit_mask_ratio,
-                    min_table_rows=self.min_table_rows,
-                    rng=rng,
-                )
+            anchor_view, positive_view = sample_low_overlap_views(
+                table,
+                view_keep_ratio=self.view_keep_ratio,
+                max_view_overlap_ratio=self.max_view_overlap_ratio,
+                min_table_rows=self.min_table_rows,
+                rng=rng,
             )
+            anchor_tables.append(anchor_view)
+            markdown_candidate_indices.append(self.sample_markdown_candidates(sample_key, item["subject_id"], rng))
+            markdown_labels.append(0)
+            positive_tables.append(positive_view)
 
         if len(anchor_tables) == 0:
             raise ValueError("All samples in this batch have fewer than two table rows.")
@@ -467,7 +534,7 @@ class ContrastiveDataCollator:
         model_inputs = {
             **anchor_tensors,
             "positive_": positive_tensors,
-            "markdown_embeddings": torch.stack(markdown_embeddings),
+            "markdown_candidate_indices": torch.stack(markdown_candidate_indices),
             "markdown_labels": torch.tensor(markdown_labels, dtype=torch.long),
             "subject_ids": subject_ids,
             "labels": torch.zeros(len(anchor_tables), dtype=torch.long),
@@ -600,45 +667,63 @@ def compute_recall_metrics(
     query_subject_ids=None,
     positive_subject_ids=None,
     positive_indices=None,
+    chunk_size: int = 1024,
 ):
-    sim = torch.matmul(anchor_embs, positive_embs.t())
+    num_queries = anchor_embs.size(0)
+    num_positives = positive_embs.size(0)
     if positive_indices is None:
-        positive_indices = [[row_idx] for row_idx in range(sim.size(0))]
-    if query_subject_ids is not None and positive_subject_ids is not None:
-        positive_index_sets = [set(indices) for indices in positive_indices]
-        same_subject_mask = torch.tensor(
-            [
-                [
-                    subject_id == other_subject_id and col_idx not in positive_index_sets[row_idx]
-                    for col_idx, other_subject_id in enumerate(positive_subject_ids)
-                ]
-                for row_idx, subject_id in enumerate(query_subject_ids)
-            ],
-            dtype=torch.bool,
-            device=sim.device,
-        )
-        sim = sim.masked_fill(same_subject_mask, float("-inf"))
-    sorted_indices = torch.argsort(sim, dim=1, descending=True)
-    positive_mask = torch.zeros_like(sim, dtype=torch.bool)
-    for row_idx, indices in enumerate(positive_indices):
-        positive_mask[row_idx, indices] = True
-    matches = positive_mask.gather(1, sorted_indices)
+        positive_indices = [[row_idx] for row_idx in range(num_queries)]
+
+    recall_hits = {k: 0.0 for k in [1, 5, 10, 50] if k <= num_positives}
+    max_k = max(recall_hits.keys(), default=1)
+    reciprocal_rank_sum = 0.0
+
+    positive_embs_t = positive_embs.t()
+    for start in range(0, num_queries, chunk_size):
+        end = min(start + chunk_size, num_queries)
+        sim = torch.matmul(anchor_embs[start:end], positive_embs_t)
+
+        if query_subject_ids is not None and positive_subject_ids is not None:
+            mask_rows = []
+            for local_row_idx, subject_id in enumerate(query_subject_ids[start:end]):
+                global_row_idx = start + local_row_idx
+                positive_index_set = set(positive_indices[global_row_idx])
+                mask_rows.append(
+                    [
+                        subject_id == other_subject_id and col_idx not in positive_index_set
+                        for col_idx, other_subject_id in enumerate(positive_subject_ids)
+                    ]
+                )
+            same_subject_mask = torch.tensor(mask_rows, dtype=torch.bool, device=sim.device)
+            sim = sim.masked_fill(same_subject_mask, float("-inf"))
+
+        topk_indices = torch.topk(sim, k=max_k, dim=1).indices
+        for local_row_idx in range(end - start):
+            global_row_idx = start + local_row_idx
+            positive_index_set = set(positive_indices[global_row_idx])
+            topk_row = topk_indices[local_row_idx].tolist()
+            for k in recall_hits:
+                if any(idx in positive_index_set for idx in topk_row[:k]):
+                    recall_hits[k] += 1.0
+
+            pos_idx = torch.tensor(positive_indices[global_row_idx], dtype=torch.long, device=sim.device)
+            best_positive_score = sim[local_row_idx, pos_idx].max()
+            rank = (sim[local_row_idx] > best_positive_score).sum().item() + 1
+            reciprocal_rank_sum += 1.0 / rank
 
     metrics = {}
-    for k in [1, 5, 10, 50]:
-        if k <= sim.size(0):
-            metrics[f"recall@{k}"] = matches[:, :k].any(dim=1).float().mean().item()
-    ranks = matches.float().argmax(dim=1) + 1
-    metrics["mrr"] = (1.0 / ranks.float()).mean().item()
+    for k, hits in recall_hits.items():
+        metrics[f"recall@{k}"] = hits / max(num_queries, 1)
+    metrics["mrr"] = reciprocal_rank_sum / max(num_queries, 1)
     return metrics
 
 
-def filter_samples(samples, min_table_rows: int, max_samples: Optional[int], markdown_embeddings):
+def filter_samples(samples, min_table_rows: int, max_samples: Optional[int], markdown_key_to_idx):
     filtered_samples = []
     for sample in samples:
         table_length = sample.get("table_length")
         has_table_rows = pd.isna(table_length) or int(table_length) >= min_table_rows
-        has_markdown_embedding = build_sample_key(sample) in markdown_embeddings
+        has_markdown_embedding = build_sample_key(sample) in markdown_key_to_idx
         if has_table_rows and has_markdown_embedding:
             filtered_samples.append(sample)
     samples = filtered_samples
@@ -647,29 +732,160 @@ def filter_samples(samples, min_table_rows: int, max_samples: Optional[int], mar
     return samples
 
 
+def load_table_embeddings(cache_paths: List[str]):
+    embedding_cache = {}
+    for cache_path in cache_paths:
+        data = torch.load(cache_path, map_location="cpu", weights_only=False)
+        embedding_cache.update(data["embeddings"])
+        text_dim = int(data["text_dim"])
+        print(f"Loaded {len(data['embeddings'])} embeddings from {cache_path}")
+
+    vocab_keys = list(embedding_cache.keys())
+    text_to_idx = build_text_to_idx(vocab_keys)
+    matrix = torch.empty(len(vocab_keys), text_dim)
+    for idx, text in enumerate(vocab_keys):
+        matrix[idx] = embedding_cache[text]
+    return text_dim, vocab_keys, text_to_idx, matrix
+
+
+def load_markdown_embeddings(paths: List[str]):
+    markdown_embeddings = {}
+    for path in paths:
+        data = torch.load(path, map_location="cpu", weights_only=True)
+        markdown_embeddings.update(normalize_markdown_embedding_keys(data))
+        print(f"Loaded {len(data)} markdown embeddings from {path}")
+
+    markdown_keys = list(markdown_embeddings.keys())
+    if len(markdown_keys) == 0:
+        raise ValueError("No markdown embeddings loaded.")
+    first_embedding = markdown_embeddings[markdown_keys[0]]
+    markdown_embedding_matrix = torch.empty(
+        len(markdown_keys),
+        first_embedding.numel(),
+        dtype=first_embedding.dtype,
+    )
+    for idx, key in enumerate(markdown_keys):
+        markdown_embedding_matrix[idx] = markdown_embeddings[key].reshape(-1)
+
+    markdown_key_to_idx = {key: idx for idx, key in enumerate(markdown_keys)}
+    markdown_subject_ids = [markdown_subject_id(key) for key in markdown_keys]
+    del markdown_embeddings
+    return markdown_key_to_idx, markdown_keys, markdown_subject_ids, markdown_embedding_matrix
+
+
+def get_embedding_cache_paths(data_args: DataArguments):
+    cache_paths = []
+    for dataset_name in data_args.dataset:
+        if dataset_name == "mimic_iv":
+            cache_paths.extend(data_args.table_text_embedding)
+        elif dataset_name == "eicu":
+            cache_paths.extend(data_args.eicu_table_text_embedding)
+        elif dataset_name == "ehrshot":
+            cache_paths.extend(data_args.ehrshot_table_text_embedding)
+        else:
+            raise ValueError(f"Unsupported dataset: {dataset_name}")
+    return cache_paths
+
+
+def get_markdown_embedding_paths(data_args: DataArguments):
+    paths = []
+    for dataset_name in data_args.dataset:
+        if dataset_name == "mimic_iv":
+            paths.extend(data_args.markdown_embedding_path)
+        elif dataset_name == "eicu":
+            paths.extend(data_args.eicu_markdown_embedding_path)
+        elif dataset_name == "ehrshot":
+            paths.extend(data_args.ehrshot_markdown_embedding_path)
+        else:
+            raise ValueError(f"Unsupported dataset: {dataset_name}")
+    return paths
+
+
+def build_one_dataset(dataset_name: str, data_args: DataArguments, sample_info_path: str):
+    if dataset_name == "mimic_iv":
+        return (
+            dataset_name,
+            MIMICIV(
+                root_dir=data_args.root_dir,
+                sample_info_path=sample_info_path,
+                lazy_mode=True,
+                shuffle=False,
+                table_mode="table_only",
+                max_samples=None,
+                use_table_length_cache=False,
+            ),
+        )
+    if dataset_name == "eicu":
+        return (
+            dataset_name,
+            EICUDataset(
+                root_dir=data_args.eicu_root_dir,
+                processed_dir=data_args.eicu_processed_dir,
+                sample_info_path=sample_info_path,
+                task_name=None,
+                lazy_mode=True,
+                shuffle=False,
+                table_mode="table_only",
+            ),
+        )
+    if dataset_name == "ehrshot":
+        return (
+            dataset_name,
+            EHRSHOTDataset(
+                root_dir=data_args.ehrshot_root_dir,
+                sample_info_path=sample_info_path,
+                task_name=None,
+                lazy_mode=True,
+                table_mode="table_only",
+            ),
+        )
+    raise ValueError(f"Unsupported dataset: {dataset_name}")
+
+
+def build_base_datasets(data_args: DataArguments, split: str, markdown_key_to_idx):
+    datasets = []
+    for dataset_name in data_args.dataset:
+        if dataset_name == "mimic_iv":
+            sample_info_path = data_args.sample_info_path if split == "train" else data_args.val_sample_info_path
+            max_samples = data_args.max_train_samples if split == "train" else data_args.max_eval_samples
+        elif dataset_name == "eicu":
+            sample_info_path = data_args.eicu_sample_info_path if split == "train" else data_args.eicu_val_sample_info_path
+            max_samples = data_args.max_train_samples if split == "train" else data_args.max_eval_samples
+        elif dataset_name == "ehrshot":
+            sample_info_path = data_args.ehrshot_sample_info_path if split == "train" else data_args.ehrshot_val_sample_info_path
+            max_samples = data_args.max_train_samples if split == "train" else data_args.max_eval_samples
+        else:
+            raise ValueError(f"Unsupported dataset: {dataset_name}")
+
+        dataset_name, dataset = build_one_dataset(dataset_name, data_args, sample_info_path)
+        dataset.sample_info = filter_samples(
+            dataset.sample_info,
+            data_args.min_table_rows,
+            max_samples,
+            markdown_key_to_idx,
+        )
+        print(f"{split} {dataset_name} samples: {len(dataset.sample_info)}")
+        datasets.append((dataset_name, dataset))
+    return datasets
+
+
 def main():
     parser = HfArgumentParser((DataArguments, TrainingArgumentsCustom))
     data_args, training_args = parser.parse_args_into_dataclasses()
 
     print("Stage 2: Contrastive Learning - Table <-> Augmented Table/Markdown")
-    print(f"Train sample info: {data_args.sample_info_path}")
-    print(f"Val sample info: {data_args.val_sample_info_path}")
-    print(f"Table text embeddings: {data_args.table_text_embedding}")
-    print(f"Markdown embeddings: {data_args.markdown_embedding_path}")
+    print(f"Datasets: {', '.join(data_args.dataset)}")
+    print(f"Table text embeddings: {get_embedding_cache_paths(data_args)}")
+    print(f"Markdown embeddings: {get_markdown_embedding_paths(data_args)}")
     print(f"Markdown candidate count: {data_args.markdown_candidate_count}")
     print(f"Pretrained path: {data_args.pretrained_path}")
-    print(f"Drop ratio: {data_args.table_drop_ratio}")
-    print(f"Time window ratio: {data_args.time_window_ratio}")
-    print(f"Value mask ratio: {data_args.value_mask_ratio}")
-    print(f"Unit mask ratio: {data_args.unit_mask_ratio}")
+    print(f"View keep ratio: {data_args.view_keep_ratio}")
+    print(f"Max view overlap ratio: {data_args.max_view_overlap_ratio}")
 
-    embedding_cache, text_dim = load_embedding_cache(data_args.table_text_embedding)
-    vocab_keys = build_vocab_keys(embedding_cache)
-    text_to_idx = build_text_to_idx(vocab_keys)
-    special_indices = get_special_token_indices(text_to_idx)
-    embedding_matrix = build_embedding_matrix(embedding_cache, vocab_keys)
-    markdown_embeddings = torch.load(data_args.markdown_embedding_path, map_location="cpu", weights_only=True)
-    markdown_embeddings = normalize_markdown_embedding_keys(markdown_embeddings)
+    text_dim, vocab_keys, text_to_idx, embedding_matrix = load_table_embeddings(get_embedding_cache_paths(data_args))
+    markdown_key_to_idx, markdown_keys, markdown_subject_ids, markdown_embedding_matrix = load_markdown_embeddings(
+        get_markdown_embedding_paths(data_args)
+    )
 
     with open(data_args.type_vocab_file, "r", encoding="utf-8") as f:
         type_vocab = {str(k): int(v) for k, v in json.load(f).items()}
@@ -684,64 +900,35 @@ def main():
     model = ContrastiveModel(
         config=config,
         embedding_matrix=embedding_matrix,
+        markdown_embedding_matrix=markdown_embedding_matrix,
         temperature=data_args.temperature,
     )
     model = load_model_weights(model, data_args.pretrained_path)
 
     os.environ.setdefault("MIMIC_SKIP_SAMPLE_CACHE_CHECK", "1")
-    train_base = MIMICIV(
-        root_dir=data_args.root_dir,
-        sample_info_path=data_args.sample_info_path,
-        lazy_mode=True,
-        shuffle=False,
-        table_mode="table_only",
-        max_samples=None,
-        use_table_length_cache=False,
-    )
-    eval_base = MIMICIV(
-        root_dir=data_args.root_dir,
-        sample_info_path=data_args.val_sample_info_path,
-        lazy_mode=True,
-        shuffle=False,
-        table_mode="table_only",
-        max_samples=None,
-        use_table_length_cache=False,
-    )
-
-    train_samples = filter_samples(
-        train_base.sample_info,
-        data_args.min_table_rows,
-        data_args.max_train_samples,
-        markdown_embeddings,
-    )
-    eval_samples = filter_samples(
-        eval_base.sample_info,
-        data_args.min_table_rows,
-        data_args.max_eval_samples,
-        markdown_embeddings,
-    )
-    if len(train_samples) == 0:
+    train_bases = build_base_datasets(data_args, "train", markdown_key_to_idx)
+    eval_bases = build_base_datasets(data_args, "eval", markdown_key_to_idx)
+    train_size = sum(len(dataset) for _, dataset in train_bases)
+    eval_size = sum(len(dataset) for _, dataset in eval_bases)
+    if train_size == 0:
         raise ValueError("No training samples left after table-length and markdown-embedding filtering.")
-    if len(eval_samples) == 0:
+    if eval_size == 0:
         raise ValueError("No eval samples left after table-length and markdown-embedding filtering.")
 
-    train_base.sample_info = train_samples
-    eval_base.sample_info = eval_samples
-
-    train_dataset = ContrastiveDataset(train_base, is_eval=False)
-    eval_dataset = ContrastiveDataset(eval_base, is_eval=True)
+    train_dataset = ContrastiveDataset(train_bases, is_eval=False)
+    eval_dataset = ContrastiveDataset(eval_bases, is_eval=True)
 
     collator = ContrastiveDataCollator(
         text_to_idx=text_to_idx,
-        pad_idx=special_indices["pad_idx"],
+        pad_idx=0,
         type_vocab=type_vocab,
         max_table_len=data_args.max_table_len,
         min_table_rows=data_args.min_table_rows,
-        table_drop_ratio=data_args.table_drop_ratio,
-        time_window_ratio=data_args.time_window_ratio,
-        value_mask_ratio=data_args.value_mask_ratio,
-        unit_mask_ratio=data_args.unit_mask_ratio,
-        markdown_embeddings=markdown_embeddings,
+        view_keep_ratio=data_args.view_keep_ratio,
+        max_view_overlap_ratio=data_args.max_view_overlap_ratio,
+        markdown_key_to_idx=markdown_key_to_idx,
+        markdown_keys=markdown_keys,
+        markdown_subject_ids=markdown_subject_ids,
         markdown_candidate_count=data_args.markdown_candidate_count,
         augmentation_seed=data_args.augmentation_seed,
     )
@@ -749,6 +936,7 @@ def main():
     print(f"Train samples: {len(train_dataset)}")
     print(f"Eval samples: {len(eval_dataset)}")
     print(f"Table vocab size: {len(vocab_keys)}, text_dim={text_dim}, type_vocab_size={type_vocab_size}")
+    del vocab_keys, embedding_matrix, markdown_embedding_matrix
 
     trainer = ContrastiveTrainer(
         model=model,
