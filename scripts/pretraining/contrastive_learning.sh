@@ -1,4 +1,4 @@
-deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
+MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
     --deepspeed "./ds_config_zero2.json" \
     --dataset mimic_iv eicu ehrshot \
     --sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv" \
@@ -15,7 +15,7 @@ deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
     --ehrshot_markdown_embedding_path "/data/EHR_data_public/EHRSHOT/pretraining_markdown_embeddings/embeddings.pt" \
     --markdown_candidate_count 1024 \
     --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/task_query_classification_mimic_eicu_ehrshot" \
-    --max_table_len 4096 \
+    --max_table_len 2048 \
     --per_device_train_batch_size 64 \
     --per_device_eval_batch_size 8 \
     --eval_retrieval_device cuda \

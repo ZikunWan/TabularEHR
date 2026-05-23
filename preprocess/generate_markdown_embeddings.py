@@ -32,6 +32,8 @@ from dataset.mimic.mimic_dataset import MIMICIV, read_parquet
 
 
 def build_state_key(dataset_name: str, sample_info: dict[str, Any]) -> str:
+    if sample_info.get("sample_id") is not None:
+        return str(sample_info["sample_id"])
     if dataset_name == "mimic_iv":
         return (
             f"mimic_iv|{sample_info.get('subject_id', '')}|"

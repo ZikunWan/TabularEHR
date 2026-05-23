@@ -71,6 +71,8 @@ print = rank0_print
 
 
 def build_state_key(dataset_name: str, sample_info: dict[str, Any]) -> str:
+    if sample_info.get("sample_id") is not None:
+        return str(sample_info["sample_id"])
     if dataset_name == "mimic_iv":
         return (
             f"mimic_iv|{sample_info.get('subject_id', '')}|"
@@ -96,21 +98,61 @@ def build_state_key(dataset_name: str, sample_info: dict[str, Any]) -> str:
     raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 
+def build_subject_id(dataset_name: str, sample_info: dict[str, Any]) -> str:
+    if dataset_name == "mimic_iv":
+        return str(sample_info.get("subject_id", ""))
+    if dataset_name in {"eicu", "ehrshot"}:
+        return str(sample_info.get("patient_id", ""))
+    raise ValueError(f"Unsupported dataset: {dataset_name}")
+
+
 def stable_seed(text: str, base_seed: int) -> int:
     digest = hashlib.sha256(f"{base_seed}:{text}".encode("utf-8")).hexdigest()
     return int(digest[:16], 16)
 
 
-def deserialize_table_records(records: list[dict[str, Any]]) -> pd.DataFrame:
-    table = pd.DataFrame(records)
-    if table.empty:
-        return pd.DataFrame(columns=["Time", "Item", "Value", "Unit", "Category"])
-
-    preferred_columns = ["Time", "Item", "Value", "Unit", "Category"]
-    table = table[[c for c in preferred_columns if c in table.columns]]
-    if "Time" in table.columns:
-        table["Time"] = pd.to_datetime(table["Time"], errors="coerce")
+def normalize_table(table: pd.DataFrame, max_table_len: Optional[int]):
+    if table is None or table.empty:
+        return None
+    table = table.copy()
+    for column in ["Time", "Item", "Value", "Unit", "Category"]:
+        if column not in table.columns:
+            table[column] = ""
+    table = table[["Time", "Item", "Value", "Unit", "Category"]]
+    table["Time"] = pd.to_datetime(table["Time"], errors="coerce")
+    table = table.sort_values("Time").reset_index(drop=True)
+    if max_table_len is not None:
+        table = table.tail(max_table_len).reset_index(drop=True)
     return table
+
+
+def split_patient_state_views(table: pd.DataFrame, min_table_rows: int):
+    table = table.reset_index(drop=True)
+    category = table["Category"].fillna("").astype(str).str.lower()
+    demo = table[category.str.contains("person|demographic", regex=True)]
+    non_demo = table[~category.str.contains("person|demographic", regex=True)]
+    if len(non_demo) < 2:
+        return None
+
+    anchor_mask = non_demo["Category"].fillna("").astype(str).str.lower().str.contains(
+        "measurement|observation|lab|vital|chart",
+        regex=True,
+    )
+    anchor_core = non_demo[anchor_mask]
+    positive_core = non_demo[~anchor_mask]
+
+    if anchor_core.empty or positive_core.empty:
+        anchor_core = non_demo.iloc[::2]
+        positive_core = non_demo.iloc[1::2]
+
+    anchor = pd.concat([demo, anchor_core], ignore_index=True)
+    positive = pd.concat([demo, positive_core], ignore_index=True)
+    if len(anchor) < min_table_rows or len(positive) < min_table_rows:
+        return None
+
+    anchor = anchor.sort_values("Time").reset_index(drop=True)
+    positive = positive.sort_values("Time").reset_index(drop=True)
+    return anchor, positive
 
 
 class GatherWithGrad(torch.autograd.Function):
@@ -405,22 +447,42 @@ class ContrastiveModel(PreTrainedModel):
 
 
 class PatientStateDataset(Dataset):
-    def __init__(self, sample_keys: List[str], state_tables: dict[str, dict[str, Any]], is_eval: bool = False):
-        self.sample_keys = sample_keys
-        self.state_tables = state_tables
+    def __init__(
+        self,
+        records: List[dict[str, Any]],
+        datasets: List[Dataset],
+        max_table_len: Optional[int],
+        min_table_rows: int,
+        is_eval: bool = False,
+    ):
+        self.records = records
+        self.datasets = datasets
+        self.max_table_len = max_table_len
+        self.min_table_rows = min_table_rows
         self.is_eval = is_eval
 
     def __len__(self):
-        return len(self.sample_keys)
+        return len(self.records)
 
     def __getitem__(self, idx):
-        sample_key = self.sample_keys[idx]
-        record = self.state_tables[sample_key]
+        record = self.records[idx]
+        sample = self.datasets[record["dataset_idx"]][record["sample_idx"]]
+        table = normalize_table(sample.get("measurement_table"), self.max_table_len)
+        split_views = None if table is None else split_patient_state_views(table, self.min_table_rows)
+        if split_views is None:
+            anchor_table = pd.DataFrame(columns=["Time", "Item", "Value", "Unit", "Category"])
+            positive_table = pd.DataFrame(columns=["Time", "Item", "Value", "Unit", "Category"])
+            is_valid = False
+        else:
+            anchor_table, positive_table = split_views
+            is_valid = True
+
         return {
-            "sample_key": sample_key,
-            "subject_id": str(record["subject_id"]),
-            "anchor_table_records": record["anchor_table_records"],
-            "positive_table_records": record["positive_table_records"],
+            "sample_key": record["sample_key"],
+            "subject_id": record["subject_id"],
+            "anchor_table": anchor_table,
+            "positive_table": positive_table,
+            "is_valid": is_valid,
             "is_eval": self.is_eval,
         }
 
@@ -436,6 +498,8 @@ class ContrastiveDataCollator:
         markdown_key_to_idx: dict[str, int],
         markdown_keys: List[str],
         markdown_subject_ids: List[str],
+        train_candidate_keys: List[str],
+        eval_candidate_keys: List[str],
         markdown_candidate_count: int,
         augmentation_seed: int,
     ):
@@ -449,12 +513,23 @@ class ContrastiveDataCollator:
         self.markdown_key_to_idx = markdown_key_to_idx
         self.markdown_keys = markdown_keys
         self.markdown_subject_ids = markdown_subject_ids
+        self.train_candidate_indices = [
+            markdown_key_to_idx[key] for key in train_candidate_keys if key in markdown_key_to_idx
+        ]
+        self.eval_candidate_indices = [
+            markdown_key_to_idx[key] for key in eval_candidate_keys if key in markdown_key_to_idx
+        ]
+        if len(self.train_candidate_indices) == 0:
+            raise ValueError("No train markdown candidates available.")
+        if len(self.eval_candidate_indices) == 0:
+            raise ValueError("No eval markdown candidates available.")
         self.markdown_candidate_count = markdown_candidate_count
         self.augmentation_seed = augmentation_seed
         self._batch_counter = 0
 
-    def _sample_markdown_candidates(self, sample_key: str, subject_id: str, rng: random.Random):
+    def _sample_markdown_candidates(self, sample_key: str, subject_id: str, is_eval: bool, rng: random.Random):
         positive_idx = self.markdown_key_to_idx[sample_key]
+        pool_indices = self.eval_candidate_indices if is_eval else self.train_candidate_indices
         candidate_indices = [positive_idx]
         seen = {positive_idx}
 
@@ -462,7 +537,7 @@ class ContrastiveDataCollator:
         max_attempts = self.markdown_candidate_count * 20 + 100
         while len(candidate_indices) < self.markdown_candidate_count and attempts < max_attempts:
             attempts += 1
-            candidate_idx = rng.randrange(len(self.markdown_keys))
+            candidate_idx = pool_indices[rng.randrange(len(pool_indices))]
             if candidate_idx in seen:
                 continue
             if self.markdown_subject_ids[candidate_idx] == subject_id:
@@ -471,7 +546,8 @@ class ContrastiveDataCollator:
             seen.add(candidate_idx)
 
         if len(candidate_indices) < self.markdown_candidate_count:
-            for candidate_idx, candidate_subject_id in enumerate(self.markdown_subject_ids):
+            for candidate_idx in pool_indices:
+                candidate_subject_id = self.markdown_subject_ids[candidate_idx]
                 if candidate_idx in seen or candidate_subject_id == subject_id:
                     continue
                 candidate_indices.append(candidate_idx)
@@ -497,9 +573,11 @@ class ContrastiveDataCollator:
         worker_seed = int(worker_info.seed) if worker_info is not None else 0
 
         for item in batch:
+            if not item.get("is_valid", False):
+                continue
             sample_key = item["sample_key"]
-            anchor_table = deserialize_table_records(item["anchor_table_records"])
-            positive_table = deserialize_table_records(item["positive_table_records"])
+            anchor_table = item["anchor_table"]
+            positive_table = item["positive_table"]
             if self.max_table_len is not None:
                 anchor_table = anchor_table.tail(self.max_table_len).reset_index(drop=True)
                 positive_table = positive_table.tail(self.max_table_len).reset_index(drop=True)
@@ -516,11 +594,11 @@ class ContrastiveDataCollator:
             positive_tables.append(positive_table)
             subject_ids.append(item["subject_id"])
             markdown_candidate_indices.append(
-                self._sample_markdown_candidates(sample_key, item["subject_id"], rng)
+                self._sample_markdown_candidates(sample_key, item["subject_id"], item.get("is_eval", False), rng)
             )
 
         if len(anchor_tables) == 0:
-            raise ValueError("All samples in this batch are invalid after cached table filtering.")
+            raise ValueError("All samples in this batch are invalid after table view construction.")
 
         anchor_tensors = build_table_token_tensors(
             anchor_tables,
@@ -819,36 +897,21 @@ def load_table_embeddings(cache_paths: List[str]):
     return text_dim, vocab_keys, text_to_idx, matrix
 
 
-def load_patient_state_cache(paths: List[str], expected_cache_config: Optional[dict[str, Any]] = None):
+def subject_id_from_sample_key(sample_key: str) -> str:
+    parts = str(sample_key).split("|")
+    return parts[1] if len(parts) > 1 else ""
+
+
+def load_patient_state_cache(paths: List[str]):
     markdown_embeddings = {}
-    state_tables = {}
     for path in paths:
         data = torch.load(path, map_location="cpu", weights_only=True)
-        state_table_path = os.path.join(os.path.dirname(path), "state_tables.pt")
-        metadata_path = os.path.join(os.path.dirname(path), "metadata.json")
-        if not os.path.exists(state_table_path):
-            raise FileNotFoundError(
-                f"Missing patient-state table cache: {state_table_path}. "
-                f"Rebuild the cache with preprocess/generate_markdown_embeddings.py."
-            )
-        if expected_cache_config is not None and os.path.exists(metadata_path):
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                metadata = json.load(f)
-            for key, expected_value in expected_cache_config.items():
-                if metadata.get(key) != expected_value:
-                    raise ValueError(
-                        f"Markdown cache config mismatch for {path}: metadata[{key}]={metadata.get(key)!r} "
-                        f"but expected {expected_value!r}. Rebuild the cache or update training args."
-                    )
-        table_records = torch.load(state_table_path, map_location="cpu", weights_only=False)
         markdown_embeddings.update(data)
-        state_tables.update(table_records)
         print(f"Loaded {len(data)} markdown embeddings from {path}")
-        print(f"Loaded {len(table_records)} patient-state tables from {state_table_path}")
 
-    markdown_keys = [key for key in markdown_embeddings if key in state_tables]
+    markdown_keys = list(markdown_embeddings.keys())
     if len(markdown_keys) == 0:
-        raise ValueError("No markdown embeddings with matching patient-state tables were loaded.")
+        raise ValueError("No markdown embeddings were loaded.")
 
     first_embedding = markdown_embeddings[markdown_keys[0]]
     markdown_embedding_matrix = torch.empty(len(markdown_keys), first_embedding.numel(), dtype=first_embedding.dtype)
@@ -856,8 +919,8 @@ def load_patient_state_cache(paths: List[str], expected_cache_config: Optional[d
         markdown_embedding_matrix[idx] = markdown_embeddings[key].reshape(-1)
 
     markdown_key_to_idx = {key: idx for idx, key in enumerate(markdown_keys)}
-    markdown_subject_ids = [str(state_tables[key]["subject_id"]) for key in markdown_keys]
-    return markdown_key_to_idx, markdown_keys, markdown_subject_ids, markdown_embedding_matrix, state_tables
+    markdown_subject_ids = [subject_id_from_sample_key(key) for key in markdown_keys]
+    return markdown_key_to_idx, markdown_keys, markdown_subject_ids, markdown_embedding_matrix
 
 
 def get_embedding_cache_paths(data_args: DataArguments):
@@ -930,33 +993,37 @@ def split_sample_info_path(data_args: DataArguments, dataset_name: str, split: s
     raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 
-def build_split_keys(data_args: DataArguments, split: str, state_tables: dict[str, Any], markdown_key_to_idx):
-    keys = []
+def build_split_records(data_args: DataArguments, split: str, markdown_key_to_idx):
+    records = []
+    datasets = []
     max_samples = data_args.max_train_samples if split == "train" else data_args.max_eval_samples
     for dataset_name in data_args.dataset:
         dataset = build_one_dataset(dataset_name, data_args, split_sample_info_path(data_args, dataset_name, split))
-        dataset_keys = []
-        for sample_info in dataset.sample_info:
+        dataset_idx = len(datasets)
+        datasets.append(dataset)
+        dataset_records = []
+        for sample_idx, sample_info in enumerate(dataset.sample_info):
             sample_key = build_state_key(dataset_name, sample_info)
-            if sample_key in state_tables and sample_key in markdown_key_to_idx:
-                dataset_keys.append(sample_key)
+            if sample_key in markdown_key_to_idx:
+                dataset_records.append(
+                    {
+                        "dataset_idx": dataset_idx,
+                        "sample_idx": sample_idx,
+                        "sample_key": sample_key,
+                        "subject_id": build_subject_id(dataset_name, sample_info),
+                    }
+                )
         if max_samples is not None:
-            dataset_keys = dataset_keys[:max_samples]
-        print(f"{split} {dataset_name} samples: {len(dataset_keys)}")
-        keys.extend(dataset_keys)
-    return keys
+            dataset_records = dataset_records[:max_samples]
+        print(f"{split} {dataset_name} samples: {len(dataset_records)}")
+        records.extend(dataset_records)
+    return records, datasets
 
 
 def main():
     parser = HfArgumentParser((DataArguments, TrainingArgumentsCustom))
     data_args, training_args = parser.parse_args_into_dataclasses()
-    expected_cache_config = {
-        "cache_schema_version": 4,
-        "max_table_len": data_args.max_table_len,
-        "min_table_rows": data_args.min_table_rows,
-        "view_strategy": "patient_state_category_views",
-        "markdown_text": "full_patient_state",
-    }
+    os.environ.setdefault("MIMIC_SKIP_SAMPLE_CACHE_CHECK", "1")
 
     print("Stage 2: Patient-State Contrastive Learning")
     print(f"Datasets: {', '.join(data_args.dataset)}")
@@ -973,8 +1040,7 @@ def main():
         markdown_keys,
         markdown_subject_ids,
         markdown_embedding_matrix,
-        state_tables,
-    ) = load_patient_state_cache(get_markdown_embedding_paths(data_args), expected_cache_config)
+    ) = load_patient_state_cache(get_markdown_embedding_paths(data_args))
 
     with open(data_args.type_vocab_file, "r", encoding="utf-8") as f:
         type_vocab = {str(k): int(v) for k, v in json.load(f).items()}
@@ -996,15 +1062,29 @@ def main():
     )
     model = load_model_weights(model, data_args.pretrained_path)
 
-    train_keys = build_split_keys(data_args, "train", state_tables, markdown_key_to_idx)
-    eval_keys = build_split_keys(data_args, "eval", state_tables, markdown_key_to_idx)
-    if len(train_keys) == 0:
+    train_records, train_source_datasets = build_split_records(data_args, "train", markdown_key_to_idx)
+    eval_records, eval_source_datasets = build_split_records(data_args, "eval", markdown_key_to_idx)
+    if len(train_records) == 0:
         raise ValueError("No training samples left after patient-state cache filtering.")
-    if len(eval_keys) == 0:
+    if len(eval_records) == 0:
         raise ValueError("No eval samples left after patient-state cache filtering.")
 
-    train_dataset = PatientStateDataset(train_keys, state_tables, is_eval=False)
-    eval_dataset = PatientStateDataset(eval_keys, state_tables, is_eval=True)
+    train_candidate_keys = [record["sample_key"] for record in train_records]
+    eval_candidate_keys = [record["sample_key"] for record in eval_records]
+    train_dataset = PatientStateDataset(
+        train_records,
+        train_source_datasets,
+        max_table_len=data_args.max_table_len,
+        min_table_rows=data_args.min_table_rows,
+        is_eval=False,
+    )
+    eval_dataset = PatientStateDataset(
+        eval_records,
+        eval_source_datasets,
+        max_table_len=data_args.max_table_len,
+        min_table_rows=data_args.min_table_rows,
+        is_eval=True,
+    )
     collator = ContrastiveDataCollator(
         text_to_idx=text_to_idx,
         pad_idx=0,
@@ -1014,6 +1094,8 @@ def main():
         markdown_key_to_idx=markdown_key_to_idx,
         markdown_keys=markdown_keys,
         markdown_subject_ids=markdown_subject_ids,
+        train_candidate_keys=train_candidate_keys,
+        eval_candidate_keys=eval_candidate_keys,
         markdown_candidate_count=data_args.markdown_candidate_count,
         augmentation_seed=data_args.augmentation_seed,
     )

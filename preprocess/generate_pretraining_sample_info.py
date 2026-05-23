@@ -148,38 +148,64 @@ def load_ehrshot_split_map(index_dir):
     return patient_to_split
 
 
-def generate_ehrshot_windows_for_patient(patient_path, split, args):
+def format_ehrshot_time(value):
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_ehrshot_time_for_id(value):
+    return value.strftime("%Y%m%d%H%M%S")
+
+
+def generate_ehrshot_visits_for_patient(patient_path, split, args):
     patient_id = os.path.splitext(os.path.basename(patient_path))[0]
     patient_df = pd.read_csv(patient_path, low_memory=False)
-    non_person_indices = patient_df.index[patient_df["omop_table"] != "person"].tolist()
-    if len(non_person_indices) < args.ehrshot_min_rows:
+
+    patient_df["start"] = pd.to_datetime(patient_df["start"], errors="coerce")
+    patient_df["end"] = pd.to_datetime(patient_df["end"], errors="coerce")
+    omop_table = patient_df["omop_table"].fillna("").astype(str).str.lower()
+    code = patient_df["code"].fillna("").astype(str)
+
+    visits = patient_df[(omop_table == "visit_occurrence") & (code == args.ehrshot_visit_code)]
+    visits = visits.dropna(subset=["start", "end"]).sort_values(["start", "end"])
+    if visits.empty:
         return []
 
+    usable_event_mask = (omop_table != "person") & (omop_table != "note") & patient_df["start"].notna()
     samples = []
-    for start_pos in range(0, len(non_person_indices), args.ehrshot_stride_rows):
-        end_pos = min(start_pos + args.ehrshot_window_rows, len(non_person_indices))
-        if end_pos - start_pos < args.ehrshot_min_rows:
+    for visit_idx, (visit_row_idx, visit) in enumerate(visits.iterrows()):
+        visit_start = visit["start"]
+        visit_end = visit["end"]
+        if visit_end < visit_start:
             continue
-        window_indices = non_person_indices[start_pos:end_pos]
+
+        in_window = usable_event_mask & (patient_df["start"] >= visit_start) & (patient_df["start"] <= visit_end)
+        window_indices = patient_df.index[in_window].tolist()
+        if len(window_indices) < args.ehrshot_min_rows:
+            continue
+
         period_begin = int(window_indices[0])
         period_end = int(window_indices[-1])
-        context_begin = start_pos
-        context_end = end_pos - 1
         samples.append(
             {
                 "dataset": "ehrshot",
-                "sample_id": f"ehrshot|{patient_id}|{context_begin}|{context_end}",
+                "sample_id": (
+                    f"ehrshot|{patient_id}|visit_ip|{int(visit_row_idx)}|"
+                    f"{format_ehrshot_time_for_id(visit_start)}|{format_ehrshot_time_for_id(visit_end)}"
+                ),
                 "patient_id": patient_id,
                 "period_begin": period_begin,
                 "period_end": period_end,
-                "context_begin": context_begin,
-                "context_end": context_end,
+                "context_begin": period_begin,
+                "context_end": period_end,
+                "visit_row_index": int(visit_row_idx),
+                "visit_index": int(visit_idx),
+                "visit_code": str(visit["code"]),
+                "visit_start": format_ehrshot_time(visit_start),
+                "visit_end": format_ehrshot_time(visit_end),
                 "split": split,
                 "task": "pretraining_context",
             }
         )
-        if end_pos == len(non_person_indices):
-            break
     return samples
 
 
@@ -194,7 +220,7 @@ def generate_ehrshot_samples(args):
         split = split_map[patient_id]
         if split not in samples_by_split:
             continue
-        samples_by_split[split].extend(generate_ehrshot_windows_for_patient(patient_path, split, args))
+        samples_by_split[split].extend(generate_ehrshot_visits_for_patient(patient_path, split, args))
     return samples_by_split
 
 
@@ -204,8 +230,7 @@ def main():
     parser.add_argument("--root_dir", type=str, default="/data/EHR_data_public/EHRSHOT")
     parser.add_argument("--processed_dir", type=str, default="/data/zikun_workspace/eicu-crd/processed")
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--ehrshot_window_rows", type=int, default=2048)
-    parser.add_argument("--ehrshot_stride_rows", type=int, default=2048)
+    parser.add_argument("--ehrshot_visit_code", type=str, default="Visit/IP")
     parser.add_argument("--ehrshot_min_rows", type=int, default=2)
     parser.add_argument("--num_workers", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     parser.add_argument("--chunksize", type=int, default=64)

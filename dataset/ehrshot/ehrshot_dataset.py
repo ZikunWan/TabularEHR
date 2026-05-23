@@ -438,7 +438,16 @@ class EHRSHOTDataset(Dataset):
         patient_info['start'] = pd.to_datetime(patient_info['start'], format='mixed')
         patient_info['end'] = pd.to_datetime(patient_info['end'], format='mixed')
         person_info = patient_info[patient_info["omop_table"] == "person"]
-        context_info = pd.concat([person_info, patient_info.iloc[sample["period_begin"]:sample["period_end"]+1]])
+        context_slice = patient_info.iloc[sample["period_begin"]:sample["period_end"]+1]
+        if sample.get("visit_start") is not None and sample.get("visit_end") is not None:
+            visit_start = pd.to_datetime(sample["visit_start"], errors="coerce")
+            visit_end = pd.to_datetime(sample["visit_end"], errors="coerce")
+            if not pd.isna(visit_start) and not pd.isna(visit_end):
+                context_slice = context_slice[
+                    (context_slice["start"] >= visit_start)
+                    & (context_slice["start"] <= visit_end)
+                ]
+        context_info = pd.concat([person_info, context_slice])
         groups = []
         for name, group in context_info.groupby('omop_table'):
             group_records = group.to_dict(orient='records')
