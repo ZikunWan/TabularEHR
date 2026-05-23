@@ -561,18 +561,20 @@ class MIMICIV(Dataset):
 
         # add last discharge note (medical history)
         last_discharge_note = ""
-        if safe_read(sample_info.get("last_discharge_id", None)):
+        if self.table_mode != "table_only" and safe_read(sample_info.get("last_discharge_id", None)):
             last_discharge_id = int(sample_info["last_discharge_id"])
             last_discharge_note = self.convertor.input_process(patient_trajectory_list[last_discharge_id])
 
         # add admissions information
         admission_text = ""
-        if safe_read(sample_info.get("admissions_id", None)) and task_name != "admissions":
+        if self.table_mode != "table_only" and safe_read(sample_info.get("admissions_id", None)) and task_name != "admissions":
             admissions_id = int(sample_info["admissions_id"])
             admission_text = self.convertor.input_process(patient_trajectory_list[admissions_id])
 
         # add patient information
-        patient_text = self.convertor.input_process(patient_trajectory_list[0])
+        patient_text = ""
+        if self.table_mode != "table_only":
+            patient_text = self.convertor.input_process(patient_trajectory_list[0])
 
         measurement_table = pd.DataFrame(columns=['Time', 'Item', 'Value', 'Unit', 'Category'])
 
@@ -581,51 +583,60 @@ class MIMICIV(Dataset):
                 item for item in trajectory_events
                 if item.get("file_name") not in {"discharge", "radiology"}
             ]
-            # Structured-EHR text excludes note content, including prior discharge note.
-            prefix_blocks = []
-            if isinstance(patient_text, str) and patient_text.strip():
-                prefix_blocks.append(
-                    {
-                        "block_id": "prefix_patient",
-                        "block_type": "prefix",
-                        "file_name": "patients",
-                        "text": patient_text,
-                    }
+            if self.table_mode == "table_only":
+                input_text = ""
+                all_text_blocks = []
+                measurement_table_row_block_ids = []
+                measurement_table = self.structed_EHR_input_process(
+                    structured_text_events,
+                    patient_trajectory_list,
                 )
-            if isinstance(admission_text, str) and admission_text.strip():
-                prefix_blocks.append(
-                    {
-                        "block_id": "prefix_admission",
-                        "block_type": "prefix",
-                        "file_name": "admissions",
-                        "text": admission_text,
-                    }
-                )
-
-            event_block_ids = [f"event_{i}" for i in range(len(structured_text_events))]
-            event_blocks = []
-            for block_id, item in zip(event_block_ids, structured_text_events):
-                event_text = self.convertor.input_process(item)
-                if isinstance(event_text, str) and event_text.strip():
-                    event_blocks.append(
+            else:
+                # Structured-EHR text excludes note content, including prior discharge note.
+                prefix_blocks = []
+                if isinstance(patient_text, str) and patient_text.strip():
+                    prefix_blocks.append(
                         {
-                            "block_id": block_id,
-                            "block_type": "event",
-                            "file_name": item.get("file_name", ""),
-                            "starttime": item.get("starttime", ""),
-                            "text": event_text,
+                            "block_id": "prefix_patient",
+                            "block_type": "prefix",
+                            "file_name": "patients",
+                            "text": patient_text,
+                        }
+                    )
+                if isinstance(admission_text, str) and admission_text.strip():
+                    prefix_blocks.append(
+                        {
+                            "block_id": "prefix_admission",
+                            "block_type": "prefix",
+                            "file_name": "admissions",
+                            "text": admission_text,
                         }
                     )
 
-            all_text_blocks = prefix_blocks + event_blocks
-            input_text = "\n\n".join([b["text"] for b in all_text_blocks if isinstance(b.get("text"), str) and b["text"].strip()])
-            measurement_table, measurement_table_row_block_ids = self.structed_EHR_input_process(
-                structured_text_events,
-                patient_trajectory_list,
-                event_block_ids=event_block_ids,
-                patient_block_id="prefix_patient",
-                return_block_ids=True,
-            )
+                event_block_ids = [f"event_{i}" for i in range(len(structured_text_events))]
+                event_blocks = []
+                for block_id, item in zip(event_block_ids, structured_text_events):
+                    event_text = self.convertor.input_process(item)
+                    if isinstance(event_text, str) and event_text.strip():
+                        event_blocks.append(
+                            {
+                                "block_id": block_id,
+                                "block_type": "event",
+                                "file_name": item.get("file_name", ""),
+                                "starttime": item.get("starttime", ""),
+                                "text": event_text,
+                            }
+                        )
+
+                all_text_blocks = prefix_blocks + event_blocks
+                input_text = "\n\n".join([b["text"] for b in all_text_blocks if isinstance(b.get("text"), str) and b["text"].strip()])
+                measurement_table, measurement_table_row_block_ids = self.structed_EHR_input_process(
+                    structured_text_events,
+                    patient_trajectory_list,
+                    event_block_ids=event_block_ids,
+                    patient_block_id="prefix_patient",
+                    return_block_ids=True,
+                )
         else:
             prefix_text_list = [patient_text, last_discharge_note, admission_text]
             input_text = self.free_text_input_process(trajectory_events, prefix_text_list)

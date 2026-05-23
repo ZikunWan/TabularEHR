@@ -8,7 +8,7 @@ deepspeed --num_gpus=$NUM_GPUS train_renji_classifier.py \
     --run_name "renji_query_classifier_llm_adapter_scratch_full" \
     --max_table_len 16384 \
     --per_device_train_batch_size 32 \
-    --num_train_epochs 100 \
+    --num_train_epochs 50 \
     --learning_rate 1e-5 \
 #    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/task_query_classification" \
 

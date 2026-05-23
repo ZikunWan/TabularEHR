@@ -539,12 +539,15 @@ class MIMICIVCDM(Dataset):
 
         if self.table_mode in {"table_only", "table_plus_rest_text"}:
             measurement_table = self.structed_EHR_input_process(cur_item)
-            context = self.free_text_input_process(
-                cur_item,
-                include_radiology=False,
-                include_demographics=False,
-                include_table_sections=True,
-            )
+            if self.table_mode == "table_only":
+                context = ""
+            else:
+                context = self.free_text_input_process(
+                    cur_item,
+                    include_radiology=False,
+                    include_demographics=False,
+                    include_table_sections=True,
+                )
         else:
             context = self.free_text_input_process(cur_item)
 

@@ -2,8 +2,10 @@ import os
 import sys
 import json
 import random
+import time
 import warnings
 from collections import defaultdict
+import multiprocessing as mp
 
 import pandas as pd
 from torch.utils.data import Dataset
@@ -18,12 +20,41 @@ from dataset.eicu.task_info import get_task_info
 warnings.filterwarnings("ignore")
 
 
+_TABLE_LENGTH_WORKER_DATASET = None
+
+
+def _eicu_table_length_cache_key_from_sample(sample_info):
+    return (
+        f"{sample_info.get('icustay_id', '')}|"
+        f"{sample_info.get('task_name', '')}|"
+        f"{sample_info.get('obs_hours', '')}"
+    )
+
+
+def _init_eicu_table_length_worker(processed_dir, obs_size):
+    global _TABLE_LENGTH_WORKER_DATASET
+    worker_dataset = EICUDataset.__new__(EICUDataset)
+    worker_dataset.processed_dir = processed_dir
+    worker_dataset.patient_dir = os.path.join(processed_dir, "patients")
+    worker_dataset.obs_size = int(obs_size)
+    _TABLE_LENGTH_WORKER_DATASET = worker_dataset
+
+
+def _compute_eicu_table_length_worker(payload):
+    idx, sample_info = payload
+    dataset = _TABLE_LENGTH_WORKER_DATASET
+    table_length = int(len(dataset.structed_EHR_input_process(sample_info)))
+    cache_key = _eicu_table_length_cache_key_from_sample(sample_info)
+    return idx, cache_key, table_length
+
+
 class EICUDataset(Dataset):
     def __init__(
         self,
         root_dir=None,
         processed_dir=None,
         sample_info_path=None,
+        sample_info=None,
         task_name=None,
         lazy_mode=False,
         shuffle=True,
@@ -33,6 +64,7 @@ class EICUDataset(Dataset):
         gap_size=12,
         pred_size=24,
         return_meds=False,
+        use_table_length_cache=False,
     ):
         random.seed(42)
         self.root_dir = root_dir
@@ -49,9 +81,18 @@ class EICUDataset(Dataset):
         self.task_name = task_name
         self.task_schema = get_task_info()
         self.return_meds = return_meds
+        self.use_table_length_cache = use_table_length_cache
+        self.local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+        self.table_length_cache_dir = os.path.join(self.processed_dir, "cache", "table_length")
+        os.makedirs(self.table_length_cache_dir, exist_ok=True)
+        sample_info_name = os.path.basename(self.sample_info_path) if self.sample_info_path else "sample_info_memory.json"
+        self.table_length_cache_file = os.path.join(self.table_length_cache_dir, f"{sample_info_name}.table_length.json")
 
-        with open(sample_info_path, "r", encoding="utf-8") as f:
+        if sample_info is None:
+            with open(sample_info_path, "r", encoding="utf-8") as f:
                 self.sample_info = json.load(f)
+        else:
+            self.sample_info = list(sample_info)
 
         if task_name is not None and task_name != "all":
             self.sample_info = [
@@ -59,6 +100,9 @@ class EICUDataset(Dataset):
                 for s in self.sample_info
                 if s["task_name"] == task_name
             ]
+
+        if self.use_table_length_cache and self.sample_info:
+            self._ensure_table_lengths_cached()
 
         if shuffle:
             random.shuffle(self.sample_info)
@@ -70,6 +114,77 @@ class EICUDataset(Dataset):
         if not self.lazy_mode:
             for idx in tqdm(range(len(self.sample_info)), desc="Pre-processing"):
                 self.data.append(self._process_item(idx))
+
+    def _table_length_cache_key(self, sample_info):
+        return _eicu_table_length_cache_key_from_sample(sample_info)
+
+    def _load_table_length_cache(self):
+        if not os.path.exists(self.table_length_cache_file):
+            return {}
+        with open(self.table_length_cache_file, "r", encoding="utf-8") as f:
+            return {str(k): int(v) for k, v in json.load(f).items()}
+
+    def _save_table_length_cache(self, cache_data):
+        with open(self.table_length_cache_file, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f)
+
+    def _ensure_table_lengths_cached(self):
+        cache_data = self._load_table_length_cache()
+        missing_indices = []
+
+        for idx, sample_info in enumerate(self.sample_info):
+            cache_key = self._table_length_cache_key(sample_info)
+            if cache_key in cache_data:
+                sample_info["table_length"] = int(cache_data[cache_key])
+            else:
+                missing_indices.append(idx)
+
+        if not missing_indices:
+            return
+
+        if self.local_rank not in (-1, 0):
+            wait_seconds = int(os.environ.get("EICU_TABLE_LENGTH_WAIT_SECONDS", "7200"))
+            deadline = time.time() + max(1, wait_seconds)
+            while time.time() < deadline:
+                cache_data = self._load_table_length_cache()
+                unresolved = 0
+                for idx in missing_indices:
+                    cache_key = self._table_length_cache_key(self.sample_info[idx])
+                    if cache_key in cache_data:
+                        self.sample_info[idx]["table_length"] = int(cache_data[cache_key])
+                    else:
+                        unresolved += 1
+                if unresolved == 0:
+                    return
+                time.sleep(2)
+            return
+
+        tasks = [(idx, self.sample_info[idx]) for idx in missing_indices]
+        requested_workers = int(os.environ.get("EICU_TABLE_LENGTH_WORKERS", str(os.cpu_count() or 1)))
+        num_workers = max(1, min(requested_workers, len(tasks)))
+
+        if num_workers == 1:
+            _init_eicu_table_length_worker(self.processed_dir, self.obs_size)
+            iterator = (_compute_eicu_table_length_worker(task) for task in tasks)
+            for idx, cache_key, table_length in tqdm(iterator, total=len(tasks), desc="Computing eICU table_length"):
+                self.sample_info[idx]["table_length"] = table_length
+                cache_data[cache_key] = table_length
+        else:
+            chunk_size = max(1, min(int(os.environ.get("EICU_TABLE_LENGTH_CHUNK_SIZE", "64")), len(tasks)))
+            with mp.get_context("fork").Pool(
+                processes=num_workers,
+                initializer=_init_eicu_table_length_worker,
+                initargs=(self.processed_dir, self.obs_size),
+            ) as pool:
+                for idx, cache_key, table_length in tqdm(
+                    pool.imap_unordered(_compute_eicu_table_length_worker, tasks, chunksize=chunk_size),
+                    total=len(tasks),
+                    desc=f"Computing eICU table_length ({num_workers} workers)",
+                ):
+                    self.sample_info[idx]["table_length"] = table_length
+                    cache_data[cache_key] = table_length
+
+        self._save_table_length_cache(cache_data)
 
     def _balance_samples(self, all_samples, max_samples):
         if max_samples is None or max_samples >= len(all_samples):
@@ -519,7 +634,7 @@ class EICUDataset(Dataset):
     def _process_item(self, index):
         sample = self.sample_info[index]
         if sample.get("task") == "pretraining_context":
-            context = self.free_text_input_process(sample)
+            context = "" if self.table_mode == "table_only" else self.free_text_input_process(sample)
             output_sample = {
                 "idx": index,
                 "input": context,
@@ -542,7 +657,7 @@ class EICUDataset(Dataset):
 
         label = sample["label"]
 
-        context = self.free_text_input_process(sample)
+        context = "" if self.table_mode == "table_only" else self.free_text_input_process(sample)
         task_info = self.task_schema[self.task_name]
         output_sample = {
             "idx": index,

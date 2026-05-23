@@ -1,10 +1,12 @@
 import os 
 import sys
 import json
+import time
 from torch.utils.data import Dataset
 from functools import *
 import pandas as pd
 import random
+import multiprocessing as mp
 import warnings
 warnings.filterwarnings("ignore", message=".*DataFrameGroupBy.apply operated on the grouping columns.*")
 from tqdm import tqdm
@@ -196,16 +198,50 @@ AGGREGATED_MAPPING = {
     "SNOMED/25469001": "Anion gap"
 }
 
+
+_TABLE_LENGTH_WORKER_DATASET = None
+
+
+def _ehrshot_table_length_cache_key_from_sample(sample_info):
+    return (
+        f"{sample_info.get('patient_id', '')}|"
+        f"{sample_info.get('period_begin', '')}|"
+        f"{sample_info.get('period_end', '')}|"
+        f"{sample_info.get('prediction_time', '')}"
+    )
+
+
+def _init_ehrshot_table_length_worker(root_dir):
+    global _TABLE_LENGTH_WORKER_DATASET
+    worker_dataset = EHRSHOTDataset.__new__(EHRSHOTDataset)
+    worker_dataset.root_dir = root_dir
+    worker_dataset.ehr_dir = os.path.join(root_dir, "patient_ehr")
+    code_2_description_path = os.path.join(root_dir, "utils/code_2_description.json")
+    with open(code_2_description_path, 'r', encoding='utf-8') as f:
+        worker_dataset.code_2_description = json.load(f)
+    worker_dataset.code_2_description.update(AGGREGATED_MAPPING)
+    _TABLE_LENGTH_WORKER_DATASET = worker_dataset
+
+
+def _compute_ehrshot_table_length_worker(payload):
+    idx, sample_info = payload
+    dataset = _TABLE_LENGTH_WORKER_DATASET
+    table_length = int(len(dataset.structed_EHR_input_process(sample_info)))
+    cache_key = _ehrshot_table_length_cache_key_from_sample(sample_info)
+    return idx, cache_key, table_length
+
 class EHRSHOTDataset(Dataset):
     def __init__(
         self,
         root_dir=None,
         sample_info_path=None,
+        sample_info=None,
         lazy_mode=True,
         table_mode="text_only",
         max_samples=None,
         task_name=None,
         return_meds=False,
+        use_table_length_cache=False,
     ):  
         random.seed(42)
         
@@ -218,15 +254,26 @@ class EHRSHOTDataset(Dataset):
         self.ehr_dir = os.path.join(root_dir, "patient_ehr")
         self.sample_info_path = sample_info_path
         self.lazy_mode = lazy_mode # load data on the fly when set to `True`, otherwise load all data to memory (require lots of memories).
-        
-        
-        df = pd.read_csv(self.sample_info_path, low_memory=False)
-        self.sample_info = df.to_dict(orient = 'records')
+        self.use_table_length_cache = use_table_length_cache
+        self.local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+        self.table_length_cache_dir = os.path.join(self.root_dir, "cache", "table_length")
+        os.makedirs(self.table_length_cache_dir, exist_ok=True)
+        sample_info_name = os.path.basename(self.sample_info_path) if self.sample_info_path else "sample_info_memory.csv"
+        self.table_length_cache_file = os.path.join(self.table_length_cache_dir, f"{sample_info_name}.table_length.json")
+
+        if sample_info is None:
+            df = pd.read_csv(self.sample_info_path, low_memory=False)
+            self.sample_info = df.to_dict(orient='records')
+        else:
+            self.sample_info = list(sample_info)
             
         # Filter by specific task if provided
         if task_name is not None:
             task_name = [task_name]
             self.sample_info = [sample for sample in self.sample_info if sample.get("task_name") in task_name]
+
+        if self.use_table_length_cache and self.sample_info:
+            self._ensure_table_lengths_cached()
         
         # 1. Sort all available samples by table length (estimated by period_end - period_begin)
         self.sample_info = sorted(self.sample_info, key=lambda x: x['period_end'] - x['period_begin'])
@@ -241,6 +288,77 @@ class EHRSHOTDataset(Dataset):
         if not self.lazy_mode:
             for idx in tqdm(range(len(self.sample_info)), desc="Pre-processing"):
                 self.data.append(self._process_item(idx))
+
+    def _table_length_cache_key(self, sample_info):
+        return _ehrshot_table_length_cache_key_from_sample(sample_info)
+
+    def _load_table_length_cache(self):
+        if not os.path.exists(self.table_length_cache_file):
+            return {}
+        with open(self.table_length_cache_file, "r", encoding="utf-8") as f:
+            return {str(k): int(v) for k, v in json.load(f).items()}
+
+    def _save_table_length_cache(self, cache_data):
+        with open(self.table_length_cache_file, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f)
+
+    def _ensure_table_lengths_cached(self):
+        cache_data = self._load_table_length_cache()
+        missing_indices = []
+
+        for idx, sample_info in enumerate(self.sample_info):
+            cache_key = self._table_length_cache_key(sample_info)
+            if cache_key in cache_data:
+                sample_info["table_length"] = int(cache_data[cache_key])
+            else:
+                missing_indices.append(idx)
+
+        if not missing_indices:
+            return
+
+        if self.local_rank not in (-1, 0):
+            wait_seconds = int(os.environ.get("EHRSHOT_TABLE_LENGTH_WAIT_SECONDS", "7200"))
+            deadline = time.time() + max(1, wait_seconds)
+            while time.time() < deadline:
+                cache_data = self._load_table_length_cache()
+                unresolved = 0
+                for idx in missing_indices:
+                    cache_key = self._table_length_cache_key(self.sample_info[idx])
+                    if cache_key in cache_data:
+                        self.sample_info[idx]["table_length"] = int(cache_data[cache_key])
+                    else:
+                        unresolved += 1
+                if unresolved == 0:
+                    return
+                time.sleep(2)
+            return
+
+        tasks = [(idx, self.sample_info[idx]) for idx in missing_indices]
+        requested_workers = int(os.environ.get("EHRSHOT_TABLE_LENGTH_WORKERS", str(os.cpu_count() or 1)))
+        num_workers = max(1, min(requested_workers, len(tasks)))
+
+        if num_workers == 1:
+            _init_ehrshot_table_length_worker(self.root_dir)
+            iterator = (_compute_ehrshot_table_length_worker(task) for task in tasks)
+            for idx, cache_key, table_length in tqdm(iterator, total=len(tasks), desc="Computing EHRSHOT table_length"):
+                self.sample_info[idx]["table_length"] = table_length
+                cache_data[cache_key] = table_length
+        else:
+            chunk_size = max(1, min(int(os.environ.get("EHRSHOT_TABLE_LENGTH_CHUNK_SIZE", "64")), len(tasks)))
+            with mp.get_context("fork").Pool(
+                processes=num_workers,
+                initializer=_init_ehrshot_table_length_worker,
+                initargs=(self.root_dir,),
+            ) as pool:
+                for idx, cache_key, table_length in tqdm(
+                    pool.imap_unordered(_compute_ehrshot_table_length_worker, tasks, chunksize=chunk_size),
+                    total=len(tasks),
+                    desc=f"Computing EHRSHOT table_length ({num_workers} workers)",
+                ):
+                    self.sample_info[idx]["table_length"] = table_length
+                    cache_data[cache_key] = table_length
+
+        self._save_table_length_cache(cache_data)
     
     def _balance_samples(self, all_samples, max_samples):
         if max_samples is None or max_samples >= len(all_samples):
@@ -700,7 +818,7 @@ class EHRSHOTDataset(Dataset):
     def _process_item(self, index):
         sample = self.sample_info[index]
         if sample.get("task") == "pretraining_context":
-            context = self.free_text_input_process(sample)
+            context = "" if self.table_mode == "table_only" else self.free_text_input_process(sample)
             output_sample = {
                 "idx": index,
                 "input": context,
@@ -717,7 +835,7 @@ class EHRSHOTDataset(Dataset):
             return output_sample
 
         task_name = sample['task_name']
-        context = self.free_text_input_process(sample)
+        context = "" if self.table_mode == "table_only" else self.free_text_input_process(sample)
 
         if self.table_mode in {"table_only", "table_plus_rest_text"}:
             measurement_df = self.structed_EHR_input_process(sample)

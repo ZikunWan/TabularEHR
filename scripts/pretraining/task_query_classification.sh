@@ -14,23 +14,23 @@ deepspeed --num_gpus=8 ./pretraining/task_query_classification.py \
     --ehrshot_train_sample_info_path "/data/EHR_data_public/EHRSHOT/index/ehrshot_train.csv" \
     --ehrshot_val_sample_info_path "/data/EHR_data_public/EHRSHOT/index/ehrshot_val.csv" \
     --ehrshot_table_text_embedding "/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings_stage2.pt" \
-    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning" \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction_mimic_eicu_ehrshot" \
     --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/task_query_classification/task_query_llm_embeddings.pt" \
     --max_table_len 16384 \
-    --per_device_train_batch_size 64 \
-    --per_device_eval_batch_size 64 \
+    --per_device_train_batch_size 8 \
+    --per_device_eval_batch_size 8 \
     --gradient_accumulation_steps 1 \
-    --dataloader_num_workers 32 \
+    --dataloader_num_workers 16 \
     --learning_rate 1e-5 \
     --warmup_steps 100 \
     --weight_decay 0.01 \
-    --num_train_epochs 10 \
+    --num_train_epochs 1 \
     --logging_steps 10 \
-    --save_steps 100 \
+    --save_steps 500 \
     --eval_strategy "steps" \
-    --eval_steps 100 \
+    --eval_steps 500 \
     --early_stopping_patience 10 \
     --wandb_project "Task_Query_Classification" \
-    --run_name "task_query_classification_stage3" \
-    --output_dir "/data/zikun_workspace/checkpoints/pretraining/task_query_classification" \
-    --max_train_samples 180000
+    --run_name "task_query_classification_after_next_token_prediction" \
+    --output_dir "/data/zikun_workspace/checkpoints/pretraining/task_query_classification_mimic_eicu_ehrshot" \
+    --max_train_samples 320000

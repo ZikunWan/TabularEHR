@@ -166,6 +166,7 @@ class RenjiDataset(Dataset):
         with open(split_path, 'r', encoding='utf-8') as f:
             self.filenames = json.load(f)
         
+        self._valid_followup_cache = {}
         self.samples = self._build_index()
 
     def _init_configs(self):
@@ -355,7 +356,7 @@ class RenjiDataset(Dataset):
                 'ranges': [
                     (0, 0.5, None, 183, 614), (0.5, 1, None, 190, 445),
                     (1, 2, None, 190, 472), (2, 6, None, 188, 472),
-                    (6, 13, None, 167, 453), (13, 18, None, 150, 407),
+                    (6, 13, None, 167, 453), (13, 99, None, 150, 407),
                 ],
                 "LONIC": "Platelets [#/volume] in Blood by Automated count",
                 "MEDS_CODE": "LOINC/777-3"
@@ -686,7 +687,7 @@ class RenjiDataset(Dataset):
                 return True
             if "<" in part or ">" in part:
                 return True
-            return re.fullmatch(r'\d+(?:\.\d+)?', part) is not None
+            return re.fullmatch(r'(?:\d+(?:\.\d+)?|\.\d+)', part) is not None
 
         if all(_is_meaningful_part(part) for part in raw_parts):
             return raw_parts
@@ -826,22 +827,31 @@ class RenjiDataset(Dataset):
             fname_key = os.path.splitext(fname)[0] if fname.endswith(('.xlsx')) else fname
             
             patient_labels = self.labels_df.loc[fname_key]
+            patient_info = self.patient_info_map[fname_key]
+            dob = pd.to_datetime(patient_info['date_of_birth'], errors='coerce')
+            if pd.isna(dob):
+                continue
             
             # For each prediction point
             for point_key in active_points:
                 cutoff_day, label_prefix, readable_point = self.PREDICTION_POINTS[point_key]
+                sample_base = {
+                    'fname': fname,
+                    'fname_key': fname_key,
+                    'prediction_point': point_key,
+                    'cutoff_day': cutoff_day,
+                    'label_prefix': label_prefix,
+                }
                 
                 if self.task_mode == 'multi_label' or self.task_mode == 'multi_task':
                     sample = {
-                        'fname': fname,
-                        'fname_key': fname_key,
-                        'prediction_point': point_key,
-                        'cutoff_day': cutoff_day,
-                        'label_prefix': label_prefix,
+                        **sample_base,
                         'metric': 'all',
                         'label_col': 'all',
                         'label_val': -100,
                     }
+                    if not self._has_valid_followup_after_birth(sample, dob):
+                        continue
                     samples.append(sample)
                 else:
                     # SINGLE TASK MODE: One sample per metric
@@ -862,15 +872,13 @@ class RenjiDataset(Dataset):
                     if pd.isna(label_val):
                         continue
                     sample = {
-                        'fname': fname,
-                        'fname_key': fname_key,
-                        'prediction_point': point_key,
-                        'cutoff_day': cutoff_day,
-                        'label_prefix': label_prefix,
+                        **sample_base,
                         'metric': metric,
                         'label_col': label_col,
                         'label_val': int(label_val),
                     }
+                    if not self._has_valid_followup_after_birth(sample, dob):
+                        continue
                     samples.append(sample)
                         
         # Apply max_samples
@@ -1012,6 +1020,16 @@ class RenjiDataset(Dataset):
         df_clean.columns = new_columns
         
         return df_clean
+
+    def _has_valid_followup_after_birth(self, sample, dob):
+        cache_key = (sample['fname'], sample['cutoff_day'])
+        if cache_key in self._valid_followup_cache:
+            return self._valid_followup_cache[cache_key]
+
+        df_followup = self._load_followup_data(sample)
+        has_valid_followup = bool((df_followup['报告日期'] >= dob).any())
+        self._valid_followup_cache[cache_key] = has_valid_followup
+        return has_valid_followup
 
     def _get_static_features(self, fname_key):
         """Get static patient features as a dict with readable names."""
@@ -1485,9 +1503,6 @@ class RenjiDataset(Dataset):
         # Load follow-up data
         df_followup = self._load_followup_data(sample)
         
-        first_row = df_followup.iloc[0]
-        surgery_date = pd.to_datetime(first_row['报告日期']) - pd.Timedelta(days=float(first_row['术后天数']))
-        
         # Load static features
         static_features = self._get_static_features(fname_key)
         
@@ -1495,7 +1510,12 @@ class RenjiDataset(Dataset):
         patient_info = self.patient_info_map[fname_key]
         recipient_gender = patient_info['recipient_gender']
         gender = 'M' if str(recipient_gender).upper() in ['M', 'MALE', '男'] else 'F'
-        dob = pd.to_datetime(patient_info['date_of_birth'])
+        dob = pd.to_datetime(patient_info['date_of_birth'], errors='coerce')
+        df_followup = df_followup[df_followup['报告日期'] >= dob].reset_index(drop=True)
+
+        first_row = df_followup.iloc[0]
+        surgery_date = pd.to_datetime(first_row['报告日期']) - pd.Timedelta(days=float(first_row['术后天数']))
+
         report_date = pd.to_datetime(df_followup['报告日期'].iloc[0])
         age_years = (report_date - dob).days / 365.25
         
@@ -1559,7 +1579,7 @@ class RenjiDataset(Dataset):
                 age_years=age_years,
                 gender=gender,
             )
-            input_text = self.structured_text_input_process(final_table)
+            input_text = "" if self.table_mode == 'table_only' else self.structured_text_input_process(final_table)
         else:
             input_text = self.free_text_input_process(
                 static_features=static_features,
@@ -1574,7 +1594,7 @@ class RenjiDataset(Dataset):
             "idx": idx,
             "instruction": instruction,
             "input": input_text,
-            "output": str(output_label),
+            "output": output_label if isinstance(output_label, torch.Tensor) else str(output_label),
             "task_info": task_info,
         }
         

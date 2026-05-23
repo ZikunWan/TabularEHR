@@ -14,18 +14,15 @@ deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
     --ehrshot_table_text_embedding "/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings_stage2.pt" \
     --ehrshot_markdown_embedding_path "/data/EHR_data_public/EHRSHOT/pretraining_markdown_embeddings/embeddings.pt" \
     --markdown_candidate_count 1024 \
-    --view_keep_ratio 0.40 \
-    --max_view_overlap_ratio 0.10 \
-    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction_mimic_eicu_ehrshot" \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/task_query_classification_mimic_eicu_ehrshot" \
     --max_table_len 4096 \
-    --per_device_train_batch_size 32 \
-    --per_device_eval_batch_size 4 \
+    --per_device_train_batch_size 64 \
+    --per_device_eval_batch_size 8 \
+    --eval_retrieval_device cuda \
+    --eval_retrieval_chunk_size 1024 \
     --gradient_accumulation_steps 1 \
     --dataloader_num_workers 8 \
     --learning_rate 1e-5 \
-    --temperature 0.07 \
-    --warmup_steps 100 \
-    --weight_decay 0.01 \
     --num_train_epochs 5 \
     --logging_steps 10 \
     --save_steps 100 \
@@ -33,5 +30,5 @@ deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
     --eval_steps 100 \
     --save_total_limit 1 \
     --wandb_project "Contrastive_Learning" \
-    --run_name "contrastive_learning_table_aug_markdown_bank_1d" \
+    --run_name "contrastive_learning" \
     --output_dir "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning_mimic_eicu_ehrshot"

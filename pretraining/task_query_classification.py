@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+import pandas as pd
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, EarlyStoppingCallback, HfArgumentParser, Trainer, TrainingArguments, set_seed
@@ -429,14 +430,14 @@ def build_mimic_datasets(root_dir: str, sample_info_paths):
     ]
 
 
-def build_eicu_datasets(root_dir: str, processed_dir: str, sample_info_path: str, task_names):
+def build_eicu_datasets(root_dir: str, processed_dir: str, sample_info, task_names):
     return [
         (
             "eicu",
             EICUDataset(
                 root_dir=root_dir,
                 processed_dir=processed_dir,
-                sample_info_path=sample_info_path,
+                sample_info=sample_info,
                 task_name=task_name,
                 lazy_mode=True,
                 shuffle=False,
@@ -447,13 +448,13 @@ def build_eicu_datasets(root_dir: str, processed_dir: str, sample_info_path: str
     ]
 
 
-def build_ehrshot_datasets(root_dir: str, sample_info_path: str, task_names):
+def build_ehrshot_datasets(root_dir: str, sample_info, task_names):
     return [
         (
             "ehrshot",
             EHRSHOTDataset(
                 root_dir=root_dir,
-                sample_info_path=sample_info_path,
+                sample_info=sample_info,
                 task_name=task_name,
                 lazy_mode=True,
                 table_mode="table_only",
@@ -461,6 +462,15 @@ def build_ehrshot_datasets(root_dir: str, sample_info_path: str, task_names):
         )
         for task_name in task_names
     ]
+
+
+def load_json_records(path: str):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_csv_records(path: str):
+    return pd.read_csv(path, low_memory=False).to_dict(orient="records")
 
 
 def get_embedding_cache_paths(data_args: DataArguments):
@@ -499,12 +509,16 @@ def main():
         val_dataset_parts.extend(build_mimic_datasets(data_args.root_dir, val_paths))
     if "eicu" in data_args.dataset:
         eicu_tasks = [task_name for task_name in binary_tasks if task_name in get_eicu_task_info()]
-        train_dataset_parts.extend(build_eicu_datasets(data_args.eicu_root_dir, data_args.eicu_processed_dir, data_args.eicu_train_sample_info_path, eicu_tasks))
-        val_dataset_parts.extend(build_eicu_datasets(data_args.eicu_root_dir, data_args.eicu_processed_dir, data_args.eicu_val_sample_info_path, eicu_tasks))
+        eicu_train_sample_info = load_json_records(data_args.eicu_train_sample_info_path)
+        eicu_val_sample_info = load_json_records(data_args.eicu_val_sample_info_path)
+        train_dataset_parts.extend(build_eicu_datasets(data_args.eicu_root_dir, data_args.eicu_processed_dir, eicu_train_sample_info, eicu_tasks))
+        val_dataset_parts.extend(build_eicu_datasets(data_args.eicu_root_dir, data_args.eicu_processed_dir, eicu_val_sample_info, eicu_tasks))
     if "ehrshot" in data_args.dataset:
         ehrshot_tasks = [task_name for task_name in binary_tasks if task_name in get_ehrshot_task_info()]
-        train_dataset_parts.extend(build_ehrshot_datasets(data_args.ehrshot_root_dir, data_args.ehrshot_train_sample_info_path, ehrshot_tasks))
-        val_dataset_parts.extend(build_ehrshot_datasets(data_args.ehrshot_root_dir, data_args.ehrshot_val_sample_info_path, ehrshot_tasks))
+        ehrshot_train_sample_info = load_csv_records(data_args.ehrshot_train_sample_info_path)
+        ehrshot_val_sample_info = load_csv_records(data_args.ehrshot_val_sample_info_path)
+        train_dataset_parts.extend(build_ehrshot_datasets(data_args.ehrshot_root_dir, ehrshot_train_sample_info, ehrshot_tasks))
+        val_dataset_parts.extend(build_ehrshot_datasets(data_args.ehrshot_root_dir, ehrshot_val_sample_info, ehrshot_tasks))
 
     train_dataset = TaskQueryDataset(train_dataset_parts, data_args.max_train_samples)
     val_dataset = TaskQueryDataset(val_dataset_parts, data_args.max_eval_samples)

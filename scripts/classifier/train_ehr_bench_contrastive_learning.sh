@@ -26,13 +26,15 @@ TASKS=(
 )
 
 PRETRAIN_NAMES=(
+    "next_token_prediction"
     "contrastive_learning"
     "task_query_classification"
 )
 
 PRETRAIN_PATHS=(
-    "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning"
-    "/data/zikun_workspace/checkpoints/pretraining/task_query_classification"
+    "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction_mimic_eicu_ehrshot"
+    "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning_mimic_eicu_ehrshot"
+    "/data/zikun_workspace/checkpoints/pretraining/task_query_classification_mimic_eicu_ehrshot"
 )
 
 for i in "${!PRETRAIN_NAMES[@]}"; do
@@ -47,7 +49,7 @@ for i in "${!PRETRAIN_NAMES[@]}"; do
 
         TRAIN_INFO_PATH="${TASK_INDEX_ROOT}/train/${TASK}.csv"
         VAL_INFO_PATH="${TASK_INDEX_ROOT}/val/${TASK}.csv"
-        OUTPUT_DIR="/data/zikun_workspace/checkpoints/ehr_bench/${TASK}/table_encoder/llm_query_${PRETRAIN_NAME}"
+        OUTPUT_DIR="/data/zikun_workspace/checkpoints/ehr_bench/${TASK}/table_encoder/llm_query_${PRETRAIN_NAME}_mimic_eicu_ehrshot"
 
         cd /data/zikun_workspace/code/train/Classifier
         deepspeed --num_gpus=$NUM_GPUS train_ehr_bench_classifier.py \
@@ -61,7 +63,7 @@ for i in "${!PRETRAIN_NAMES[@]}"; do
             --max_table_len 16384 \
             --per_device_train_batch_size 16 \
             --per_device_eval_batch_size 64 \
-            --num_train_epochs 100 \
+            --num_train_epochs 50 \
             --learning_rate 1e-5 \
             --early_stopping_patience 10 \
             --max_train_samples 3000 \
