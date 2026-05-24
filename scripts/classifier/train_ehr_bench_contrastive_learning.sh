@@ -26,15 +26,15 @@ TASKS=(
 )
 
 PRETRAIN_NAMES=(
-    "next_token_prediction"
+    #"next_token_prediction"
     "contrastive_learning"
-    "task_query_classification"
+    #"task_query_classification"
 )
 
 PRETRAIN_PATHS=(
-    "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction_mimic_eicu_ehrshot"
+    #"/data/zikun_workspace/checkpoints/pretraining/next_token_prediction_mimic_eicu_ehrshot"
     "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning_mimic_eicu_ehrshot"
-    "/data/zikun_workspace/checkpoints/pretraining/task_query_classification_mimic_eicu_ehrshot"
+    #"/data/zikun_workspace/checkpoints/pretraining/task_query_classification_mimic_eicu_ehrshot"
 )
 
 for i in "${!PRETRAIN_NAMES[@]}"; do

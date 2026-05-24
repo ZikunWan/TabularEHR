@@ -35,7 +35,7 @@ class RenjiScriptArguments(LocalLLMScriptArguments, ScriptArguments):
         metadata={"help": "Comma-separated metrics, e.g. ALT,AST,TB."},
     )
     target_prediction_points: Optional[str] = field(
-        default=None,
+        default="day0,day30,day180,day365",
         metadata={"help": "Comma-separated prediction points, e.g. day14,day30."},
     )
     target_windows: Optional[str] = field(
@@ -109,7 +109,6 @@ def main():
         target_metrics=target_metrics,
         target_prediction_points=target_prediction_points,
         shuffle=False,
-        task_mode="single",
     )
     train_size = len(train_source)
     rank0_print(f"Train source size: {train_size}")
@@ -174,7 +173,6 @@ def main():
             target_metrics=target_metrics,
             target_prediction_points=target_prediction_points,
             shuffle=False,
-            task_mode="single",
         )
         rank0_print(f"Validation source size: {len(eval_source)}")
         eval_dataset = build_dataset_from_source(

@@ -331,7 +331,6 @@ def _load_datasets_for_split(exp_args: ExpansionArguments, data_args: DataArgume
             table_mode="text_only",
             target_prediction_points=["day0", "day30", "day180", "day365"],
             shuffle=False,
-            task_mode="multi_label",
             return_meds=True,
         )
         dataset.samples = [sample for sample in dataset.samples if sample["metric"] == "all"]

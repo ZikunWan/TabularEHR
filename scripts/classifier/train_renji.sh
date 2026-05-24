@@ -10,5 +10,5 @@ deepspeed --num_gpus=$NUM_GPUS train_renji_classifier.py \
     --per_device_train_batch_size 32 \
     --num_train_epochs 50 \
     --learning_rate 1e-5 \
-#    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/task_query_classification" \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning_mimic_eicu_ehrshot" \
 

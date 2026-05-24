@@ -89,12 +89,18 @@ def compute_classification_metrics(eval_pred):
     if labels.ndim == logits.ndim and labels.shape == logits.shape and logits.ndim == 2:
         probs = _sigmoid(logits)
         preds = (probs > 0.5).astype(int)
-        y_true = labels.astype(int)
+        mask = labels != -100
+        if not np.any(mask):
+            return {"auroc": 0.5, "accuracy": 0.0, "f1": 0.0, "recall": 0.0}
 
-        auroc = calc_auroc(y_true, probs, average="micro")
-        acc = calc_accuracy(y_true, preds)
-        f1 = calc_f1(y_true, preds, average="micro")
-        recall = calc_recall(y_true, preds, average="micro")
+        y_true = labels[mask].astype(int)
+        y_prob = probs[mask]
+        y_pred = preds[mask]
+
+        auroc = calc_auroc(y_true, y_prob)
+        acc = calc_accuracy(y_true, y_pred)
+        f1 = calc_f1(y_true, y_pred, average="binary")
+        recall = calc_recall(y_true, y_pred, average="binary")
         return {"auroc": auroc, "accuracy": acc, "f1": f1, "recall": recall}
 
     # Multi-class classification: logits [N, C], labels [N]

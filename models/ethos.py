@@ -253,8 +253,11 @@ class GPT2NoBiasForSequenceClassification(nn.Module):
                 loss_fct = nn.CrossEntropyLoss()
                 loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
             else:
-                loss_fct = nn.BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels.to(logits.dtype))
+                loss_fct = nn.BCEWithLogitsLoss(reduction="none")
+                mask = labels != -100
+                safe_labels = labels.masked_fill(~mask, 0).to(logits.dtype)
+                loss_matrix = loss_fct(logits, safe_labels)
+                loss = (loss_matrix * mask.to(logits.dtype)).sum() / mask.sum().clamp(min=1)
 
         return SequenceClassifierOutput(
             loss=loss,

@@ -558,7 +558,6 @@ def build_dataset(args):
             table_mode="text_only",
             target_prediction_points=["day0", "day30", "day180", "day365"],
             shuffle=False,
-            task_mode="multi_label",
             return_meds=True,
         )
 

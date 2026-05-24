@@ -43,11 +43,18 @@ def normalize_label(raw_label) -> str:
     return lowered
 
 
-def build_label_metadata(task_info: dict, task_name: str):
+def build_label_metadata(task_info: dict, task_name: str, num_labels_override: Optional[int] = None):
     info = task_info[task_name]
     task_type = info["task_type"]
-    if task_type in {"multi_label_classification", "generative_task"}:
+    if task_type == "generative_task":
         raise NotImplementedError(f"ETHOS sequence classification does not support task '{task_name}'.")
+    if task_type == "multi_label_classification":
+        if num_labels_override is None:
+            raise ValueError(f"num_labels_override is required for multi-label task '{task_name}'.")
+        candidates = [str(i) for i in range(int(num_labels_override))]
+        label_to_id = {label: i for i, label in enumerate(candidates)}
+        id_to_label = {i: label for i, label in enumerate(candidates)}
+        return candidates, label_to_id, id_to_label
 
     if "candidate" in info:
         candidates = [str(x) for x in info["candidate"]]
@@ -78,6 +85,7 @@ class EthosOnTheFlyCollator:
         label_to_id: dict,
         task_name: str,
         max_seq_length: int,
+        task_type: str,
         static_prefixes: str = "GENDER,RACE,ETHNICITY,MARITAL",
         unknown_event_token: str = "UNKNOWN_EVENT",
         empty_context_token: str = "NO_EVENT_CONTEXT",
@@ -90,11 +98,16 @@ class EthosOnTheFlyCollator:
         self.label_to_id = label_to_id
         self.task_name = task_name
         self.max_seq_length = int(max_seq_length)
+        self.task_type = task_type
         self.unknown_event_token = unknown_event_token
         self.empty_context_token = empty_context_token
         self.pad_token_id = 0
 
     def _encode_label(self, raw_label):
+        if self.task_type == "multi_label_classification":
+            if isinstance(raw_label, torch.Tensor):
+                return raw_label.to(torch.float32).reshape(-1)
+            return torch.as_tensor(raw_label, dtype=torch.float32).reshape(-1)
         label = normalize_label(raw_label)
         if label not in self.label_to_id:
             raise ValueError(
@@ -132,10 +145,15 @@ class EthosOnTheFlyCollator:
             input_ids.append(ids)
             attention_mask.append(mask)
 
+        if self.task_type == "multi_label_classification":
+            labels = torch.stack([self._encode_label(feature["output"]) for feature in features])
+        else:
+            labels = torch.tensor([self._encode_label(feature["output"]) for feature in features], dtype=torch.long)
+
         return {
             "input_ids": torch.stack(input_ids),
             "attention_mask": torch.stack(attention_mask),
-            "labels": torch.tensor([self._encode_label(feature["output"]) for feature in features], dtype=torch.long),
+            "labels": labels,
         }
 
 
@@ -152,7 +170,7 @@ class EthosModelArguments:
     early_stopping_threshold: float = field(default=0.0)
 
 
-def build_ethos_model(model_args, vocab_dir: str, max_seq_length: int, num_labels: int, id_to_label: dict, label_to_id: dict):
+def build_ethos_model(model_args, vocab_dir: str, max_seq_length: int, num_labels: int, id_to_label: dict, label_to_id: dict, problem_type: str):
     vocab = Vocabulary.from_path(vocab_dir)
     config = GPT2Config(
         vocab_size=len(vocab),
@@ -170,7 +188,7 @@ def build_ethos_model(model_args, vocab_dir: str, max_seq_length: int, num_label
     config.num_labels = int(num_labels)
     config.id2label = id_to_label
     config.label2id = label_to_id
-    config.problem_type = "single_label_classification"
+    config.problem_type = problem_type
 
     model = GPT2NoBiasForSequenceClassification(config, num_labels=num_labels, classifier_dropout=model_args.classifier_dropout)
     if model_args.model_name_or_path:
@@ -198,7 +216,17 @@ def run_training(*, model_args, data_args, training_args: TrainingArguments, tas
         training_args.greater_is_better = True
         training_args.load_best_model_at_end = True
 
-    candidates, label_to_id, id_to_label = build_label_metadata(task_info, task_name)
+    task_type = task_info[task_name]["task_type"]
+    num_labels_override = None
+    if task_type == "multi_label_classification":
+        sample_label = train_dataset[0]["output"]
+        num_labels_override = int(torch.as_tensor(sample_label).numel())
+
+    candidates, label_to_id, id_to_label = build_label_metadata(
+        task_info,
+        task_name,
+        num_labels_override=num_labels_override,
+    )
     model, vocab = build_ethos_model(
         model_args,
         vocab_dir=data_args.vocab_dir,
@@ -206,12 +234,14 @@ def run_training(*, model_args, data_args, training_args: TrainingArguments, tas
         num_labels=len(candidates),
         id_to_label=id_to_label,
         label_to_id=label_to_id,
+        problem_type=task_type,
     )
     collator = EthosOnTheFlyCollator(
         vocab_dir=data_args.vocab_dir,
         label_to_id=label_to_id,
         task_name=task_name,
         max_seq_length=data_args.max_seq_length,
+        task_type=task_type,
     )
 
     rank0_print("=" * 80)
@@ -256,6 +286,8 @@ def run_training(*, model_args, data_args, training_args: TrainingArguments, tas
         "n_head": model_args.n_head,
         "n_embd": model_args.n_embd,
         "freeze_encoder": model_args.freeze_encoder,
+        "task_type": task_type,
+        "num_labels": len(candidates),
         "label2id": label_to_id,
         "id2label": {str(k): v for k, v in id_to_label.items()},
         "tokenization": "on_the_fly",

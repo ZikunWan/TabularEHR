@@ -123,7 +123,8 @@ def main():
 
     train_dataset = RenjiDataset(
         root_dir=data_args.data_dir, split="train", table_mode="table_only", shuffle=True,
-        max_samples=data_args.max_train_samples, task_mode='multi_label'
+        max_samples=data_args.max_train_samples,
+        target_prediction_points=["day0", "day30", "day180", "day365"],
     )
 
     query_texts = {}

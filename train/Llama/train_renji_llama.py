@@ -65,7 +65,6 @@ class RenjiMEDSDataset(Dataset):
             table_mode="text_only",
             target_prediction_points=target_prediction_points,
             shuffle=False,
-            task_mode="multi_label",
             return_meds=True,
         )
         self.samples = [sample for sample in self.source.samples if sample["metric"] == "all"]

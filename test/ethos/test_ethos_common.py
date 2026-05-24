@@ -63,9 +63,49 @@ def load_state_dict(checkpoint_dir):
     raise FileNotFoundError(f"No ETHOS weights found in {checkpoint_dir}")
 
 
-def compute_metrics_df(logits, labels, task_name, id_to_label):
+def compute_metrics_df(logits, labels, task_name, id_to_label, task_type):
     logits = np.asarray(logits)
-    labels = np.asarray(labels).reshape(-1).astype(int)
+    labels = np.asarray(labels)
+
+    if task_type == "multi_label_classification":
+        probs = 1.0 / (1.0 + np.exp(-logits))
+        preds = (probs > 0.5).astype(int)
+        mask = labels != -100
+
+        if np.any(mask):
+            y_true = labels[mask].astype(int)
+            y_prob = probs[mask]
+            y_pred = preds[mask]
+            acc = accuracy_score(y_true, y_pred)
+            macro_f1 = f1_score(y_true, y_pred, average="binary", zero_division=0)
+            try:
+                auroc = roc_auc_score(y_true, y_prob)
+            except ValueError:
+                auroc = 0.5
+        else:
+            acc = 0.0
+            macro_f1 = 0.0
+            auroc = 0.5
+
+        metrics_df = pd.DataFrame([{
+            "Task": task_name,
+            "Count": int(mask.sum()),
+            "Metric": "AUROC",
+            "Value": float(auroc),
+            "AUROC": float(auroc),
+            "Accuracy": float(acc),
+            "Macro F1": float(macro_f1),
+        }])
+        raw_df = pd.DataFrame({
+            "idx": list(range(len(labels))),
+            "label": labels.tolist(),
+            "pred": preds.tolist(),
+            "prob": probs.tolist(),
+            "valid_count": mask.sum(axis=1).astype(int).tolist(),
+        })
+        return metrics_df, raw_df
+
+    labels = labels.reshape(-1).astype(int)
     probs = np.exp(logits - np.max(logits, axis=-1, keepdims=True))
     probs = probs / np.sum(probs, axis=-1, keepdims=True)
     preds = np.argmax(probs, axis=-1).astype(int)
@@ -102,8 +142,14 @@ def run_ethos_test(*, args, task_name, task_info, eval_dataset):
     metadata = load_metadata(args.checkpoint_dir)
     vocab_dir = args.vocab_dir or metadata["vocab_dir"]
     max_seq_length = int(args.max_seq_length or metadata["max_seq_length"])
+    task_type = metadata.get("task_type", task_info[task_name]["task_type"])
+    num_labels_override = metadata.get("num_labels") if task_type == "multi_label_classification" else None
 
-    candidates, label_to_id, id_to_label = build_label_metadata(task_info, task_name)
+    candidates, label_to_id, id_to_label = build_label_metadata(
+        task_info,
+        task_name,
+        num_labels_override=num_labels_override,
+    )
     model_args = model_args_from_metadata(args, metadata)
     model, vocab = build_ethos_model(
         model_args,
@@ -112,6 +158,7 @@ def run_ethos_test(*, args, task_name, task_info, eval_dataset):
         num_labels=len(candidates),
         id_to_label=id_to_label,
         label_to_id=label_to_id,
+        problem_type=task_type,
     )
     model.load_state_dict(load_state_dict(args.checkpoint_dir), strict=False)
 
@@ -120,6 +167,7 @@ def run_ethos_test(*, args, task_name, task_info, eval_dataset):
         label_to_id=label_to_id,
         task_name=task_name,
         max_seq_length=max_seq_length,
+        task_type=task_type,
     )
     output_dir = args.output_dir or os.path.join(args.checkpoint_dir, "eval_logs")
 
@@ -145,7 +193,7 @@ def run_ethos_test(*, args, task_name, task_info, eval_dataset):
     if not trainer.is_world_process_zero():
         return
 
-    metrics_df, raw_df = compute_metrics_df(outputs.predictions, outputs.label_ids, task_name, id_to_label)
+    metrics_df, raw_df = compute_metrics_df(outputs.predictions, outputs.label_ids, task_name, id_to_label, task_type)
     rank0_print(metrics_df.to_string(index=False))
     os.makedirs(output_dir, exist_ok=True)
     metrics_df.to_csv(os.path.join(output_dir, "metrics.csv"), index=False)

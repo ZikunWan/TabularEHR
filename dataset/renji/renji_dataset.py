@@ -116,7 +116,6 @@ class RenjiDataset(Dataset):
                  target_metrics=None,
                  target_prediction_points=None,
                  shuffle=False,
-                 task_mode='single', # 'single' or 'multi_task'
                  return_meds=False,
                  ):
         """
@@ -132,8 +131,6 @@ class RenjiDataset(Dataset):
             target_prediction_points: List of prediction point keys to filter
                           (e.g., ['day0', 'day30', 'day180', 'day365']). If None, use all.
             shuffle: Whether to shuffle the dataset
-            task_mode: 'single' for one sample per (patient, point, metric),
-                       'multi_task' for one sample per (patient, point) with matrix label.
             return_meds: Whether to include MEDS-format inputs.
         """
         self.root_dir = root_dir
@@ -145,15 +142,8 @@ class RenjiDataset(Dataset):
         self.target_metrics = target_metrics
         self.target_prediction_points = target_prediction_points
         self.shuffle = shuffle
-        self.task_mode = task_mode
         self.return_meds = return_meds
         self.task_schema = get_task_info()
-        
-        if self.table_mode in {'table_only', 'table_plus_rest_text'}:
-            self.task_mode = 'multi_label'
-            
-        if self.task_mode not in ['single', 'multi_task', 'multi_label']:
-            raise ValueError(f"Invalid task_mode: {self.task_mode}. Must be 'single', 'multi_task', or 'multi_label'.")
         
         self.followup_dir = os.path.join(self.root_dir, 'follow_ups')
         self.index_dir = os.path.join(self.root_dir, 'index')
@@ -800,27 +790,14 @@ class RenjiDataset(Dataset):
     def _build_index(self):
         """
         Build sample index.
-        - 'single': One sample per (patient, prediction_point, metric)
-        - 'multi_task': One sample per (patient, prediction_point)
+        - One sample per (patient, prediction_point) with point-specific multi-label supervision.
         """
-        _rank0_print(f"[{self.split}] Building sample index (mode={self.task_mode})...")
+        _rank0_print(f"[{self.split}] Building sample index (mode=multi_label)...")
         
         # Determine which prediction points to use
-        active_points = self.target_prediction_points or list(self.PREDICTION_POINTS.keys())
+        active_points = self.target_prediction_points
         
         samples = []
-        
-        # Pre-calculate metrics for single task mode optimization
-        # Get all label columns grouped by window prefix
-        all_label_cols = [c for c in self.labels_df.columns if c != 'filename']
-        metrics_by_window = {}
-        for col in all_label_cols:
-            parts = col.split('_', 1)
-            if len(parts) == 2:
-                window, metric = parts
-                if window not in metrics_by_window:
-                    metrics_by_window[window] = set()
-                metrics_by_window[window].add(metric)
         
         for fname in tqdm(self.filenames, desc=f"[{self.split}] Indexing", disable=not _is_main_process()):
             # Get filename without extension
@@ -842,44 +819,17 @@ class RenjiDataset(Dataset):
                     'cutoff_day': cutoff_day,
                     'label_prefix': label_prefix,
                 }
-                
-                if self.task_mode == 'multi_label' or self.task_mode == 'multi_task':
-                    sample = {
-                        **sample_base,
-                        'metric': 'all',
-                        'label_col': 'all',
-                        'label_val': -100,
-                    }
-                    if not self._has_valid_followup_after_birth(sample, dob):
-                        continue
-                    samples.append(sample)
-                else:
-                    # SINGLE TASK MODE: One sample per metric
-                    if label_prefix not in metrics_by_window:
-                        continue
-                    
-                window_metrics = metrics_by_window[label_prefix]
-                
-                # Filter by target_metrics if specified
-                if self.target_metrics:
-                    window_metrics = [m for m in window_metrics if m in self.target_metrics]
-                
-                for metric in window_metrics:
-                    label_col = f"{label_prefix}_{metric}"
-                    label_val = patient_labels.get(label_col)
-                    
-                    # Skip if label is NaN
-                    if pd.isna(label_val):
-                        continue
-                    sample = {
-                        **sample_base,
-                        'metric': metric,
-                        'label_col': label_col,
-                        'label_val': int(label_val),
-                    }
-                    if not self._has_valid_followup_after_birth(sample, dob):
-                        continue
-                    samples.append(sample)
+                sample = {
+                    **sample_base,
+                    'metric': 'all',
+                    'label_col': 'all',
+                    'label_val': -100,
+                }
+                if not self._has_valid_followup_after_birth(sample, dob):
+                    continue
+                if not self._has_any_valid_multilabel_target(patient_labels, point_key):
+                    continue
+                samples.append(sample)
                         
         # Apply max_samples
         if self.max_samples and len(samples) > self.max_samples:
@@ -897,7 +847,7 @@ class RenjiDataset(Dataset):
         return samples
 
     def _balanced_sample(self, samples, target_count):
-        """Sample with task and label balancing."""
+        """Sample with task balancing."""
         from collections import defaultdict
         
         # Group by (prediction_point, metric)
@@ -917,42 +867,8 @@ class RenjiDataset(Dataset):
             bucket = task_buckets[task]
             fair_share = remaining_quota // remaining_tasks_count
             take_count = min(len(bucket), fair_share)
-            
-            # Label-balanced sampling within task
-            label_0 = [s for s in bucket if s['label_val'] == 0]
-            label_1 = [s for s in bucket if s['label_val'] == 1]
-            
-            if label_0 and label_1:
-                per_label = take_count // 2
-                n0 = min(len(label_0), per_label)
-                n1 = min(len(label_1), per_label)
-                
-                idx0 = np.random.choice(len(label_0), n0, replace=False)
-                idx1 = np.random.choice(len(label_1), n1, replace=False)
-                
-                selected = [label_0[i] for i in idx0] + [label_1[i] for i in idx1]
-                
-                # Fill remaining from larger group
-                total = len(selected)
-                if total < take_count:
-                    remaining = take_count - total
-                    used_0 = set(idx0)
-                    used_1 = set(idx1)
-                    unused_0 = [i for i in range(len(label_0)) if i not in used_0]
-                    unused_1 = [i for i in range(len(label_1)) if i not in used_1]
-                    
-                    if len(unused_0) > len(unused_1):
-                        extra = min(remaining, len(unused_0))
-                        extra_idx = np.random.choice(unused_0, extra, replace=False)
-                        selected.extend([label_0[i] for i in extra_idx])
-                    else:
-                        extra = min(remaining, len(unused_1))
-                        extra_idx = np.random.choice(unused_1, extra, replace=False)
-                        selected.extend([label_1[i] for i in extra_idx])
-            else:
-                # Only one label class
-                indices = np.random.choice(len(bucket), min(take_count, len(bucket)), replace=False)
-                selected = [bucket[i] for i in indices]
+            indices = np.random.choice(len(bucket), min(take_count, len(bucket)), replace=False)
+            selected = [bucket[i] for i in indices]
             
             final_samples.extend(selected)
             remaining_quota -= len(selected)
@@ -980,8 +896,8 @@ class RenjiDataset(Dataset):
             for metric, count in metric_dist.most_common(10):
                 _rank0_print(f"  {metric}: {count}")
         
-        # Label distribution - checks if 'label_val' exists
-        if samples and 'label_val' in samples[0]:
+        # Label distribution is only meaningful for single-label samples.
+        if samples and 'label_val' in samples[0] and any(s['label_val'] in {0, 1} for s in samples):
             label_0 = sum(1 for s in samples if s['label_val'] == 0)
             label_1 = sum(1 for s in samples if s['label_val'] == 1)
             if label_0 > 0:
@@ -1030,6 +946,14 @@ class RenjiDataset(Dataset):
         has_valid_followup = bool((df_followup['报告日期'] >= dob).any())
         self._valid_followup_cache[cache_key] = has_valid_followup
         return has_valid_followup
+
+    def _has_any_valid_multilabel_target(self, patient_labels, point_key):
+        _, prefix, _ = self.PREDICTION_POINTS[point_key]
+        for metric in self.ALL_METRICS:
+            col_name = f"{prefix}_{metric}"
+            if col_name in patient_labels and pd.notna(patient_labels[col_name]):
+                return True
+        return False
 
     def _get_static_features(self, fname_key):
         """Get static patient features as a dict with readable names."""
@@ -1087,7 +1011,7 @@ class RenjiDataset(Dataset):
                 v_str = self.ZH_VALUE_MAP[v_str]
             
             item_name = k
-            unit = "-"
+            unit = ""
             
             # Handle special static features with units
             if 'Weight (kg)' in item_name:
@@ -1520,57 +1444,30 @@ class RenjiDataset(Dataset):
         age_years = (report_date - dob).days / 365.25
         
         # PREPARE TARGETS
-        if self.task_mode == 'multi_label' or self.task_mode == 'multi_task':
-            # labels_matrix: shape [num_points, num_metrics]
-            labels_matrix = torch.full((len(self.ALL_POINTS), len(self.ALL_METRICS)), -100, dtype=torch.float32)
-            
-            patient_labels = self.labels_df.loc[sample['fname_key']]
-            for p_idx, p_key in enumerate(self.ALL_POINTS):
-                _, prefix, _ = self.PREDICTION_POINTS[p_key]
-                for m_idx, met in enumerate(self.ALL_METRICS):
-                    col_name = f"{prefix}_{met}"
-                    if col_name in patient_labels and pd.notna(patient_labels[col_name]):
-                        labels_matrix[p_idx, m_idx] = float(patient_labels[col_name])
-            
-            output_label = labels_matrix
-            task_info = deepcopy(self.task_schema["multi_label_prediction"])
-            instruction = task_info["instruction_template"].format(
-                prediction_point=f"{readable_point} post-transplant",
-            )
-            task_info.update(
-                {
-                    "task": "multi_label",
-                    "prediction_point": readable_point,
-                    "label_window": "all_windows",
-                    "window": "all_windows",
-                    "instruction": instruction,
-                }
-            )
-        else:
-            metric = sample['metric']
-            label_val = sample['label_val']
-            # Translate metric to English for instruction
-            metric_en = metric
+        labels_matrix = torch.full((len(self.ALL_POINTS), len(self.ALL_METRICS)), -100, dtype=torch.float32)
 
-            task_info = deepcopy(self.task_schema["single_metric_prediction"])
-            instruction = task_info["instruction_template"].format(
-                prediction_point=f"{readable_point} post-transplant",
-                metric=metric_en,
-                label_window=label_prefix,
-            )
-            instruction += "\nAnswer with 0 for Normal, or 1 for Abnormal."
+        patient_labels = self.labels_df.loc[sample['fname_key']]
+        target_point_idx = self.ALL_POINTS.index(prediction_point)
+        _, target_prefix, _ = self.PREDICTION_POINTS[prediction_point]
+        for m_idx, met in enumerate(self.ALL_METRICS):
+            col_name = f"{target_prefix}_{met}"
+            if col_name in patient_labels and pd.notna(patient_labels[col_name]):
+                labels_matrix[target_point_idx, m_idx] = float(patient_labels[col_name])
 
-            output_label = str(label_val)
-            task_info.update(
-                {
-                    "task": metric,
-                    "label": "Abnormal" if label_val == 1 else "Normal",
-                    "prediction_point": readable_point,
-                    "label_window": label_prefix,
-                    "window": label_prefix,
-                    "instruction": instruction,
-                }
-            )
+        output_label = labels_matrix
+        task_info = deepcopy(self.task_schema["multi_label_prediction"])
+        instruction = task_info["instruction_template"].format(
+            prediction_point=f"{readable_point} post-transplant",
+        )
+        task_info.update(
+            {
+                "task": "multi_label",
+                "prediction_point": readable_point,
+                "label_window": label_prefix,
+                "window": label_prefix,
+                "instruction": instruction,
+            }
+        )
         if self.table_mode in {'table_only', 'table_plus_rest_text'}:
             final_table = self.structed_EHR_input_process(
                 static_features=static_features,
