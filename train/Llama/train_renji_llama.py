@@ -83,17 +83,20 @@ class RenjiMEDSDataset(Dataset):
             dtype=torch.float32,
         )
         patient_labels = self.source.labels_df.loc[sample["fname_key"]]
-        for p_idx, p_key in enumerate(RenjiDataset.ALL_POINTS):
-            _, prefix, _ = RenjiDataset.PREDICTION_POINTS[p_key]
-            for m_idx, metric in enumerate(RenjiDataset.ALL_METRICS):
-                col_name = f"{prefix}_{metric}"
-                if col_name in patient_labels and pd.notna(patient_labels[col_name]):
-                    labels[p_idx, m_idx] = float(patient_labels[col_name])
+        target_point_idx = RenjiDataset.ALL_POINTS.index(sample["prediction_point"])
+        _, prefix, _ = RenjiDataset.PREDICTION_POINTS[sample["prediction_point"]]
+        for m_idx, metric in enumerate(RenjiDataset.ALL_METRICS):
+            col_name = f"{prefix}_{metric}"
+            if col_name in patient_labels and pd.notna(patient_labels[col_name]):
+                labels[target_point_idx, m_idx] = float(patient_labels[col_name])
         return labels.reshape(-1)
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
         df_followup = self.source._load_followup_data(sample)
+        patient_info = self.source.patient_info_map[sample["fname_key"]]
+        dob = pd.to_datetime(patient_info["date_of_birth"], errors="coerce")
+        df_followup = df_followup[df_followup["报告日期"] >= dob].reset_index(drop=True)
         first_row = df_followup.iloc[0]
         surgery_date = pd.to_datetime(first_row["报告日期"]) - pd.Timedelta(days=float(first_row["术后天数"]))
         static_features = self.source._get_static_features(sample["fname_key"])
@@ -251,7 +254,7 @@ class RenjiLlamaMEDSMultiLabelClassifier(torch.nn.Module):
                 safe_labels.to(logits.dtype),
                 reduction="none",
             )
-            loss = (loss_matrix * mask.to(logits.dtype)).sum() / mask.to(logits.dtype).sum()
+            loss = (loss_matrix * mask.to(logits.dtype)).sum() / mask.to(logits.dtype).sum().clamp(min=1)
 
         return SequenceClassifierOutput(
             loss=loss,
@@ -312,12 +315,6 @@ def main():
     training_args.fp16 = False
     set_seed(training_args.seed)
 
-    if (not model_args.freeze_encoder) and (not model_args.use_peft):
-        raise ValueError(
-            "Full encoder fine-tuning is disabled for this script. "
-            "Use --use_peft True when setting --freeze_encoder False."
-        )
-
     training_args.eval_strategy = "no"
     training_args.load_best_model_at_end = False
 
@@ -366,6 +363,10 @@ def main():
                 "Head-only training requires only classifier parameters to be trainable, "
                 f"but found non-classifier trainable parameters: {invalid_trainable[:5]}"
             )
+    else:
+        encoder_trainable = [name for name in trainable_parameters if name.startswith("encoder.")]
+        if not encoder_trainable:
+            raise ValueError("Full fine-tuning expects encoder parameters to be trainable, but none were found.")
     rank0_print(f"Trainable parameter tensors: {len(trainable_parameters)}")
 
     train_dataset = _load_source_dataset(

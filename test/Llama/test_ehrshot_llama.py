@@ -18,11 +18,11 @@ from dataset.ehrshot.ehrshot_dataset import EHRSHOTDataset
 from dataset.ehrshot.task_info import get_task_info
 from train.Llama.train_ehrshot_llama import (
     CLASSIFICATION_HEAD_METADATA_FILENAME,
-    CLASSIFICATION_HEAD_STATE_FILENAME,
     LlamaMEDSClassifier,
     MEDSDataCollator,
     _build_label_metadata,
     _load_clmbr_tokenizer,
+    load_sequence_classifier_checkpoint,
     rank0_print,
 )
 
@@ -60,12 +60,6 @@ class DataArguments:
 def _load_json(path: str):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
-
-
-def _load_classifier_state_dict(checkpoint_dir: str):
-    head_path = os.path.join(checkpoint_dir, CLASSIFICATION_HEAD_STATE_FILENAME)
-    state_dict = torch.load(head_path, map_location="cpu")
-    return {key[len("classifier."):]: value for key, value in state_dict.items()}
 
 
 def _compute_sequence_classification_metrics(logits, labels, task_name: str, idx_list=None, id2label: Optional[dict] = None):
@@ -159,10 +153,11 @@ def main():
         num_labels=len(candidates),
         id_to_label=id_to_label,
         label_to_id=label_to_id,
-        freeze_encoder=True,
+        freeze_encoder=bool(train_metadata.get("freeze_encoder", True)),
         tokenizer_vocab_size=int(tokenizer.vocab_size),
+        use_peft=False,
     )
-    model.classifier.load_state_dict(_load_classifier_state_dict(model_args.checkpoint_dir))
+    model = load_sequence_classifier_checkpoint(model, model_args.checkpoint_dir, train_metadata)
 
     test_info_path = data_args.test_info_path
 

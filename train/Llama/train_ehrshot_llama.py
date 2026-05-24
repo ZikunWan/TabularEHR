@@ -9,6 +9,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from safetensors.torch import load_file as safe_load_file, save_file as safe_save_file
 from transformers import (
     AutoModelForCausalLM,
     EarlyStoppingCallback,
@@ -18,6 +19,7 @@ from transformers import (
     set_seed,
 )
 from transformers.modeling_outputs import SequenceClassifierOutput
+from transformers.utils import SAFE_WEIGHTS_NAME, WEIGHTS_NAME
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if PROJECT_ROOT not in sys.path:
@@ -127,12 +129,61 @@ def _save_training_metadata(
     rank0_print(f"Saved training metadata to {metadata_path}")
 
 
+def _save_full_model_state(state_dict: dict, output_dir: str, *, save_safetensors: bool):
+    os.makedirs(output_dir, exist_ok=True)
+    full_state_dict = {key: value.detach().cpu() for key, value in state_dict.items()}
+    if save_safetensors:
+        safe_save_file(full_state_dict, os.path.join(output_dir, SAFE_WEIGHTS_NAME))
+    else:
+        torch.save(full_state_dict, os.path.join(output_dir, WEIGHTS_NAME))
+
+
+def _load_full_model_state(checkpoint_dir: str):
+    safe_path = os.path.join(checkpoint_dir, SAFE_WEIGHTS_NAME)
+    bin_path = os.path.join(checkpoint_dir, WEIGHTS_NAME)
+    if os.path.isfile(safe_path):
+        return safe_load_file(safe_path)
+    if os.path.isfile(bin_path):
+        return torch.load(bin_path, map_location="cpu")
+    raise FileNotFoundError(
+        f"No full-model checkpoint found under '{checkpoint_dir}'. Expected '{SAFE_WEIGHTS_NAME}' or '{WEIGHTS_NAME}'."
+    )
+
+
+def load_sequence_classifier_checkpoint(model, checkpoint_dir: str, train_metadata: dict):
+    if bool(train_metadata.get("use_peft", False)):
+        from peft import PeftModel
+
+        model.encoder = PeftModel.from_pretrained(model.encoder, checkpoint_dir, is_trainable=False)
+        model.use_peft = True
+    elif not bool(train_metadata.get("freeze_encoder", True)):
+        model.load_state_dict(_load_full_model_state(checkpoint_dir), strict=True)
+        return model
+
+    classifier_state = torch.load(
+        os.path.join(checkpoint_dir, CLASSIFICATION_HEAD_STATE_FILENAME),
+        map_location="cpu",
+    )
+    classifier_state = {key[len("classifier."):]: value for key, value in classifier_state.items()}
+    model.classifier.load_state_dict(classifier_state)
+    return model
+
+
 class HeadOnlySequenceClassificationTrainer(Trainer):
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         model_to_save = self.accelerator.unwrap_model(self.model)
-        _save_classifier_head(model_to_save, output_dir, state_dict=model_to_save.state_dict())
+        if output_dir is None:
+            output_dir = self.args.output_dir
+        model_state_dict = state_dict or model_to_save.state_dict()
+        _save_classifier_head(model_to_save, output_dir, state_dict=model_state_dict)
         if model_to_save.use_peft:
             model_to_save.encoder.save_pretrained(output_dir, safe_serialization=self.args.save_safetensors)
+        elif not model_to_save.freeze_encoder:
+            _save_full_model_state(
+                model_state_dict,
+                output_dir,
+                save_safetensors=self.args.save_safetensors,
+            )
         torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
 
 
@@ -147,7 +198,7 @@ class ModelArguments:
     )
     freeze_encoder: bool = field(
         default=True,
-        metadata={"help": "Freeze encoder parameters and train only classifier head."},
+        metadata={"help": "Freeze encoder parameters and train only classifier head. Set false to train the encoder."},
     )
     use_peft: bool = field(
         default=False,
@@ -390,11 +441,6 @@ def main():
     training_args.fp16 = False
     set_seed(training_args.seed)
 
-    if (not model_args.freeze_encoder) and (not model_args.use_peft):
-        raise ValueError(
-            "Full encoder fine-tuning is disabled for this script. "
-            "Use --use_peft True when setting --freeze_encoder False."
-        )
     if model_args.early_stopping_patience < 1:
         raise ValueError("--early_stopping_patience must be >= 1.")
 
@@ -421,6 +467,8 @@ def main():
     rank0_print(f"Max seq length: {data_args.max_seq_length}")
     rank0_print(f"Freeze encoder: {model_args.freeze_encoder}")
     rank0_print(f"Use PEFT: {model_args.use_peft}")
+    if (not model_args.freeze_encoder) and (not model_args.use_peft):
+        rank0_print("Training mode: full fine-tuning")
     if model_args.use_peft:
         rank0_print(
             f"LoRA config: r={model_args.lora_r}, alpha={model_args.lora_alpha}, "
@@ -457,6 +505,10 @@ def main():
                 "Head-only training requires only classifier parameters to be trainable, "
                 f"but found non-classifier trainable parameters: {invalid_trainable[:5]}"
             )
+    else:
+        encoder_trainable = [name for name in trainable_parameters if name.startswith("encoder.")]
+        if not encoder_trainable:
+            raise ValueError("Full fine-tuning expects encoder parameters to be trainable, but none were found.")
     rank0_print(f"Trainable parameter tensors: {len(trainable_parameters)}")
     rank0_print(
         f"Trainable parameter names: {', '.join(trainable_parameters) if trainable_parameters else 'None'}"

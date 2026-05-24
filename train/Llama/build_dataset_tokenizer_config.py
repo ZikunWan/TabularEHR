@@ -371,6 +371,9 @@ def _get_sample_hf_ehr_events(dataset_name: str, dataset, index: int):
     if ds == "renji":
         index_item = dataset.samples[index]
         df_followup = dataset._load_followup_data(index_item)
+        patient_info = dataset.patient_info_map[index_item["fname_key"]]
+        dob = pd.to_datetime(patient_info["date_of_birth"], errors="coerce")
+        df_followup = df_followup[df_followup["报告日期"] >= dob].reset_index(drop=True)
         first_row = df_followup.iloc[0]
         surgery_date = pd.to_datetime(first_row["报告日期"]) - pd.Timedelta(days=float(first_row["术后天数"]))
         static_features = dataset._get_static_features(index_item["fname_key"])

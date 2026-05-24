@@ -178,7 +178,7 @@ class ModelArguments:
     )
     freeze_encoder: bool = field(
         default=True,
-        metadata={"help": "Freeze encoder parameters and train only classifier head."},
+        metadata={"help": "Freeze encoder parameters and train only classifier head. Set false to train the encoder."},
     )
     use_peft: bool = field(
         default=False,
@@ -266,11 +266,6 @@ def main():
     training_args.fp16 = False
     set_seed(training_args.seed)
 
-    if (not model_args.freeze_encoder) and (not model_args.use_peft):
-        raise ValueError(
-            "Full encoder fine-tuning is disabled for this script. "
-            "Use --use_peft True when setting --freeze_encoder False."
-        )
     if model_args.early_stopping_patience < 1:
         raise ValueError("--early_stopping_patience must be >= 1.")
     if training_args.eval_strategy == "no":
@@ -352,6 +347,10 @@ def main():
                 "Head-only training requires only classifier parameters to be trainable, "
                 f"but found non-classifier trainable parameters: {invalid_trainable[:5]}"
             )
+    else:
+        encoder_trainable = [name for name in trainable_parameters if name.startswith("encoder.")]
+        if not encoder_trainable:
+            raise ValueError("Full fine-tuning expects encoder parameters to be trainable, but none were found.")
     rank0_print(f"Trainable parameter tensors: {len(trainable_parameters)}")
     rank0_print(f"Trainable parameter names: {', '.join(trainable_parameters)}")
 
