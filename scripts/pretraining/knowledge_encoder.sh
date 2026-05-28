@@ -1,38 +1,18 @@
 if [ "$CACHE_ONLY" = "true" ]; then
     python ./pretraining/knowledge_encoder.py \
         --stage "stage2" \
-        --model_name_or_path "/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT" \
-        --stage1_checkpoint "/data/zikun_workspace/checkpoints/pretraining/text_encoder/epoch_100.pt" \
         --concept_path "/data/zikun_workspace/knowledge/CONCEPT.csv" \
         --concept_relationship_path "/data/zikun_workspace/knowledge/CONCEPT_RELATIONSHIP.csv" \
         --triple_cache "/data/zikun_workspace/.cache/pretraining/triples_cache" \
         --kg_max_triples "None" \
-        --kg_num_negatives 4 \
-        --kg_margin 1.0 \
-        --kg_distance_p 2 \
-        --kg_relation_reg 1e-4 \
-        --max_length 256 \
-        --batch_size 64 \
-        --epochs 50 \
-        --learning_rate 1e-5 \
-        --weight_decay 0.01 \
-        --warmup_ratio 0.05 \
-        --num_workers 8 \
-        --bf16 \
-        --logging_steps 50 \
-        --save_steps 1000 \
-        --save_total_limit 1 \
-        --report_to "wandb" \
-        --wandb_project "knowledge_encoder" \
-        --wandb_run_name "stage2_concept_relationship_cache" \
-        --output_dir "/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2" \
+        --output_dir "/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2" \
         --cache_only
 else
     deepspeed --num_gpus=8 ./pretraining/knowledge_encoder.py \
         --deepspeed "./ds_config_zero2.json" \
         --stage "stage2" \
         --model_name_or_path "/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT" \
-        --stage1_checkpoint "/data/zikun_workspace/checkpoints/pretraining/text_encoder/epoch_100.pt" \
+        --stage1_checkpoint "/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/epoch_100.pt" \
         --concept_path "/data/zikun_workspace/knowledge/CONCEPT.csv" \
         --concept_relationship_path "/data/zikun_workspace/knowledge/CONCEPT_RELATIONSHIP.csv" \
         --triple_cache "/data/zikun_workspace/.cache/pretraining/triples_cache" \
@@ -55,5 +35,5 @@ else
         --report_to "wandb" \
         --wandb_project "knowledge_encoder" \
         --wandb_run_name "stage2_concept_relationship_transe_zero2" \
-        --output_dir "/data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2"
+        --output_dir "/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2" 
 fi

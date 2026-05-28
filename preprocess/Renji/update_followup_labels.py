@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
@@ -20,6 +21,19 @@ DEFAULT_AGE_YEARS = 5.0
 
 ABNORMAL_FLAGS = {"Abnormal", "Elevated", "Very High"}
 NORMAL_FLAGS = {"Normal"}
+
+DRUG_CONC_MED_COLS = {
+    "Tacrolimus_Conc": ["他克莫司缓释胶囊", "他克莫司(赛福开)", "他克莫司(普乐可复)"],
+}
+
+DRUG_CONC_RANGES = {
+    "Tacrolimus_Conc": [
+        (0, 31, 8.0, 12.0),
+        (31, 181, 7.0, 10.0),
+        (181, 366, 5.0, 8.0),
+        (366, float("inf"), 4.0, 6.0),
+    ],
+}
 
 ZH_TO_EN = {
     "WBC": "WBC",
@@ -221,7 +235,7 @@ LAB_META = {
     "PT": {"unit": "s", "ranges": [(0, 99, None, 9.4, 12.5)]},
     "INR": {"unit": "", "ranges": [(0, 99, None, 0.8, 1.15)]},
     "Blood_Ammonia": {"unit": "μmol/L", "ranges": [(0, 99, None, 9, 30)]},
-    "Tacrolimus_Conc": {"unit": "ng/mL", "ranges": [(0, 99, None, 0, 30)]},
+    "Tacrolimus_Conc": {"unit": "ng/mL", "ranges": []},
     "CsA_Trough": {"unit": "ng/mL", "ranges": [(0, 99, None, 100, 400)]},
     "CsA_Peak": {"unit": "ng/mL", "ranges": [(0, 99, None, 400, 1600)]},
     "Rapa_Conc": {"unit": "ng/mL", "ranges": [(0, 99, None, 5, 20)]},
@@ -370,6 +384,81 @@ def get_reference_range(lab_item: str, age_years: float, gender: Optional[str]) 
     return None, None, unit
 
 
+def is_blank(value) -> bool:
+    if value is None:
+        return True
+    value_str = str(value).strip()
+    return value_str == "" or value_str.lower() in {"nan", "none", "null"}
+
+
+def numeric_values(value) -> List[float]:
+    if is_blank(value):
+        return []
+    return [float(x) for x in re.findall(r"\d+(?:\.\d+)?", str(value))]
+
+
+def parse_postop_day(value) -> Optional[float]:
+    if is_blank(value):
+        return None
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value))
+    return float(match.group(0)) if match else None
+
+
+def row_value(row: List[str], header_index: Dict[str, int], col: str) -> str:
+    idx = header_index.get(col)
+    if idx is None or idx >= len(row):
+        return ""
+    return row[idx]
+
+
+def get_first_drug_days(header_index: Dict[str, int], rows: List[List[str]]) -> Dict[str, Optional[float]]:
+    postop_idx = header_index.get("术后天数")
+    first_drug_days = {}
+
+    for lab_item, med_cols in DRUG_CONC_MED_COLS.items():
+        med_days = []
+        conc_days = []
+        conc_col = next((col for col, metric_en in ZH_TO_EN.items() if metric_en == lab_item), None)
+
+        for row in rows:
+            day = parse_postop_day(row[postop_idx]) if postop_idx is not None and postop_idx < len(row) else None
+            if day is None:
+                continue
+
+            has_drug = any(
+                any(value > 0 for value in numeric_values(row_value(row, header_index, med_col)))
+                for med_col in med_cols
+            )
+            if has_drug:
+                med_days.append(day)
+
+            if conc_col and not is_blank(row_value(row, header_index, conc_col)):
+                conc_days.append(day)
+
+        first_days = med_days + conc_days
+        first_drug_days[lab_item] = min(first_days) if first_days else None
+
+    return first_drug_days
+
+
+def get_drug_concentration_reference_range(
+    lab_item: str,
+    postop_day: Optional[float],
+    first_drug_days: Optional[Dict[str, Optional[float]]],
+) -> Tuple[Optional[float], Optional[float], str]:
+    unit = LAB_META.get(lab_item, {}).get("unit", "")
+    first_day = (first_drug_days or {}).get(lab_item)
+    if postop_day is None or first_day is None:
+        return None, None, unit
+
+    elapsed_days = postop_day - first_day
+    for day_min, day_max, low, high in DRUG_CONC_RANGES[lab_item]:
+        if day_min <= elapsed_days < day_max:
+            return low, high, unit
+
+    return None, None, unit
+
+
 def get_severity_flag(lab_item: str, value: float, age_years: float, gender: Optional[str]) -> Optional[str]:
     meta = LAB_META.get(lab_item, {})
     severity_bands = meta.get("severity_bands")
@@ -425,8 +514,22 @@ def split_multivalue_parts(value: str) -> List[str]:
     return [value_str]
 
 
-def describe_lab_value(lab_item: str, value: str, age_years: float, gender: Optional[str]) -> Dict[str, str]:
-    low_limit, high_limit, unit = get_reference_range(lab_item, age_years, gender)
+def describe_lab_value(
+    lab_item: str,
+    value: str,
+    age_years: float,
+    gender: Optional[str],
+    postop_day: Optional[float] = None,
+    first_drug_days: Optional[Dict[str, Optional[float]]] = None,
+) -> Dict[str, str]:
+    if lab_item in DRUG_CONC_RANGES:
+        low_limit, high_limit, unit = get_drug_concentration_reference_range(
+            lab_item,
+            postop_day,
+            first_drug_days,
+        )
+    else:
+        low_limit, high_limit, unit = get_reference_range(lab_item, age_years, gender)
 
     raw_value = str(value).strip()
     raw_lower = raw_value.lower()
@@ -460,7 +563,14 @@ def describe_lab_value(lab_item: str, value: str, age_years: float, gender: Opti
     return {"flag": "Unknown", "unit": unit, "value": raw_value}
 
 
-def compute_label_for_value(metric_en: str, raw_value: str, age_years: float, gender: Optional[str]) -> str:
+def compute_label_for_value(
+    metric_en: str,
+    raw_value: str,
+    age_years: float,
+    gender: Optional[str],
+    postop_day: Optional[float] = None,
+    first_drug_days: Optional[Dict[str, Optional[float]]] = None,
+) -> str:
     if raw_value is None:
         return ""
 
@@ -473,7 +583,7 @@ def compute_label_for_value(metric_en: str, raw_value: str, age_years: float, ge
     saw_unknown = False
 
     for part in parts:
-        desc = describe_lab_value(metric_en, part, age_years, gender)
+        desc = describe_lab_value(metric_en, part, age_years, gender, postop_day, first_drug_days)
         flag = str(desc.get("flag", "")).strip()
 
         if flag in ABNORMAL_FLAGS:
@@ -505,6 +615,7 @@ def rebuild_file_labels(
 
     header_index = {col: idx for idx, col in enumerate(header)}
     metric_columns = get_metric_columns(header)
+    first_drug_days = get_first_drug_days(header_index, data_rows)
 
     label_cols_added = 0
     for source_col, _, label_col in metric_columns:
@@ -516,6 +627,7 @@ def rebuild_file_labels(
                 row.append("")
 
     report_date_idx = header_index.get("报告日期")
+    postop_day_idx = header_index.get("术后天数")
 
     changed = False
     label_cells_updated = 0
@@ -525,13 +637,21 @@ def rebuild_file_labels(
             row.extend([""] * (len(header) - len(row)))
 
         report_date = row[report_date_idx] if report_date_idx is not None and report_date_idx < len(row) else None
+        postop_day = row[postop_day_idx] if postop_day_idx is not None and postop_day_idx < len(row) else None
         age_years = infer_age_years(patient_row, report_date)
 
         for source_col, metric_en, label_col in metric_columns:
             src_idx = header_index[source_col]
             label_idx = header_index[label_col]
             raw_value = row[src_idx] if src_idx < len(row) else ""
-            new_label = compute_label_for_value(metric_en, raw_value, age_years, gender)
+            new_label = compute_label_for_value(
+                metric_en,
+                raw_value,
+                age_years,
+                gender,
+                parse_postop_day(postop_day),
+                first_drug_days,
+            )
             old_label = row[label_idx].strip() if label_idx < len(row) else ""
 
             if new_label != old_label:

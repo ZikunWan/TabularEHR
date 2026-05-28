@@ -24,7 +24,7 @@ for TASK in "${TASKS[@]}"; do
     --output_dir "/data/zikun_workspace/checkpoints/eicu/${TASK}" \
     --run_name "eicu_${TASK}" \
     --task_name "$TASK" \
-    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning_mimic_eicu_ehrshot" \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning" \
     --max_table_len 16384 \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 32 \

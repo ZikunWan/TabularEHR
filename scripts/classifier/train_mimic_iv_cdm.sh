@@ -5,9 +5,9 @@ cd /data/zikun_workspace/code/train/Classifier
 deepspeed --include localhost:4,5,6,7 train_mimic_iv_cdm_classifier.py \
     --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
     --embedding_cache "/data/zikun_workspace/.cache/embeddings/mimic_iv_cdm/text_embeddings_stage2.pt" \
-    --output_dir "/data/zikun_workspace/checkpoints/mimic_iv_cdm/main_diagnosis/query_classifier_llm_adapter_contrastive_learning_3dataset_full" \
-    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning_mimic_eicu_ehrshot" \
-    --run_name "mimic_iv_cdm_main_diagnosis_query_classifier_llm_adapter_contrastive_learning_3dataset_full" \
+    --output_dir "/data/zikun_workspace/checkpoints/mimic_iv_cdm/main_diagnosis/after_contrastive_learning" \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning" \
+    --run_name "mimic_iv_cdm_main_diagnosis_query_classifier_llm_adapter_contrastive_learning" \
     --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt" \
     --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
     --max_table_len 16384 \

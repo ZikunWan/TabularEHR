@@ -4,7 +4,7 @@ deepspeed --num_gpus=8 ./pretraining/task_query_classification.py \
     --root_dir "/data/zikun_workspace/mimic-iv-3.1_tabular" \
     --train_sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train" \
     --val_sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val" \
-    --table_text_embedding "/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt" \
+    --table_text_embedding "/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings_stage2.pt" \
     --eicu_root_dir "/data/zikun_workspace/eicu-crd" \
     --eicu_processed_dir "/data/zikun_workspace/eicu-crd/processed" \
     --eicu_train_sample_info_path "/data/zikun_workspace/eicu-crd/processed/sample_info_train.json" \
@@ -14,7 +14,6 @@ deepspeed --num_gpus=8 ./pretraining/task_query_classification.py \
     --ehrshot_train_sample_info_path "/data/EHR_data_public/EHRSHOT/index/ehrshot_train.csv" \
     --ehrshot_val_sample_info_path "/data/EHR_data_public/EHRSHOT/index/ehrshot_val.csv" \
     --ehrshot_table_text_embedding "/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings_stage2.pt" \
-    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction_mimic_eicu_ehrshot" \
     --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/task_query_classification/task_query_llm_embeddings.pt" \
     --max_table_len 16384 \
     --per_device_train_batch_size 8 \
@@ -31,6 +30,7 @@ deepspeed --num_gpus=8 ./pretraining/task_query_classification.py \
     --eval_steps 500 \
     --early_stopping_patience 10 \
     --wandb_project "Task_Query_Classification" \
-    --run_name "task_query_classification_after_next_token_prediction" \
-    --output_dir "/data/zikun_workspace/checkpoints/pretraining/task_query_classification_mimic_eicu_ehrshot" \
+    --run_name "task_query_classification" \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction" \
+    --output_dir "/data/zikun_workspace/checkpoints/pretraining/task_query_classification" \
     --max_train_samples 320000

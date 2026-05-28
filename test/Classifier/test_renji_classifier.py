@@ -12,7 +12,7 @@ from transformers import HfArgumentParser, set_seed, Trainer, TrainingArguments
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(project_root)
 
-from dataset.renji_dataset import RenjiDataset
+from dataset.renji.renji_dataset import RenjiDataset
 from models.TableEncoder.config import LongTableEncoder1DConfig
 from models.TableEncoder.query_classifier import TaskQueryClassificationModel
 from utils.weight_loader import load_model_weights
@@ -59,7 +59,7 @@ def main():
     
     test_dataset = RenjiDataset(
         root_dir=data_args.data_dir, split=data_args.split, table_mode="table_only", shuffle=False,
-        task_mode="multi_label"
+        target_prediction_points=["day0", "day30", "day180", "day365"],
     )
     if len(test_dataset) == 0: sys.exit(0)
 

@@ -3,6 +3,8 @@ import torch.nn as nn
 import numpy as np
 from torch.nn.init import trunc_normal_
 
+from .attention import CrossFlashAttention, RMSNorm
+
 class Identity(nn.Module):
     def __init__(self):
         super().__init__()
@@ -52,9 +54,12 @@ class QFormer(nn.Module):
         trunc_normal_(self.query, std=.02)
         
         self.kv_proj = nn.Linear(self.encoder_hidden_size, self.decoder_hidden_size, bias=False)
-        self.attn = nn.MultiheadAttention(self.decoder_hidden_size, num_heads = self.decoder_hidden_size // dim_head, batch_first=True)
-        self.ln_q = nn.LayerNorm(self.decoder_hidden_size)
-        self.ln_kv = nn.LayerNorm(self.decoder_hidden_size)
+        self.attn = CrossFlashAttention(
+            self.decoder_hidden_size,
+            num_heads=self.decoder_hidden_size // dim_head,
+        )
+        self.ln_q = RMSNorm(self.decoder_hidden_size)
+        self.ln_kv = RMSNorm(self.decoder_hidden_size)
         
         if mlp_type == 'identity':
             self.mlp = Identity()
@@ -78,8 +83,7 @@ class QFormer(nn.Module):
             trunc_normal_(m.weight, std=.02)
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
+        elif isinstance(m, (nn.LayerNorm, RMSNorm)):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, context, context_mask=None):
@@ -90,7 +94,6 @@ class QFormer(nn.Module):
         projected_context = self.ln_kv(projected_context)
         
         key_tensor = projected_context
-        value_tensor = projected_context
 
         batch_size, seq_len = projected_context.shape[:2]
         if context_mask is not None:
@@ -110,11 +113,7 @@ class QFormer(nn.Module):
         
         query_tensor = self.ln_q(query_tensor) + query_pos_embeds
         
-        # context_mask: (batch_size, seq_len). 1 is valid, 0 is pad
-        # MultiheadAttention requires key_padding_mask where True = ignore padding
-        key_padding_mask = (context_mask == 0) if context_mask is not None else None
-        
-        attention_output = self.attn(query_tensor, key_tensor, value_tensor, key_padding_mask)[0]
+        attention_output = self.attn(query_tensor, key_tensor, context_mask)
         mlp_output = self.mlp(attention_output)
         return self.out_proj(mlp_output)
 

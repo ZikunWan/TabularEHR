@@ -6,6 +6,7 @@ from transformers import PreTrainedModel
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 from .adapter import QFormerAdapter
+from .attention import CrossFlashAttention, RMSNorm
 from .config import LongTableEncoder1DConfig
 from .encoder import LongTableEncoder1D
 
@@ -13,11 +14,12 @@ from .encoder import LongTableEncoder1D
 class QueryCrossAttentionHead(nn.Module):
     def __init__(self, config: LongTableEncoder1DConfig, query_dim: int):
         super().__init__()
-        self.cross_attn = nn.MultiheadAttention(
-            embed_dim=query_dim,
+        self.query_norm = RMSNorm(query_dim)
+        self.context_norm = RMSNorm(query_dim)
+        self.cross_attn = CrossFlashAttention(
+            dim=query_dim,
             num_heads=query_dim // config.dim_head,
-            dropout=config.dropout,
-            batch_first=True,
+            attn_drop=config.dropout,
         )
         self.norm1 = nn.LayerNorm(query_dim)
         self.ffn = nn.Sequential(
@@ -33,18 +35,9 @@ class QueryCrossAttentionHead(nn.Module):
         hidden_states: torch.Tensor,
         seq_mask: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        query = query_embeds.to(dtype=hidden_states.dtype).unsqueeze(1)
-        key_padding_mask = None
-        if seq_mask is not None:
-            key_padding_mask = ~seq_mask.bool()
-
-        attn_out, _ = self.cross_attn(
-            query=query,
-            key=hidden_states,
-            value=hidden_states,
-            key_padding_mask=key_padding_mask,
-            need_weights=False,
-        )
+        query = self.query_norm(query_embeds.to(dtype=hidden_states.dtype)).unsqueeze(1)
+        hidden_states = self.context_norm(hidden_states)
+        attn_out = self.cross_attn(query, hidden_states, seq_mask)
         query = self.norm1(query + attn_out)
         query = self.norm2(query + self.ffn(query))
         return query.squeeze(1)
@@ -125,12 +118,12 @@ class TaskQueryClassificationModel(PreTrainedModel):
                 loss_fct = nn.CrossEntropyLoss()
                 loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1).long())
             elif self.problem_type == "multi_label_classification":
-                loss_fct = nn.BCEWithLogitsLoss(reduction="none")
                 mask = labels != -100
-                safe_labels = labels.clone()
-                safe_labels[~mask] = 0
-                loss_matrix = loss_fct(logits, safe_labels.to(logits.dtype))
-                loss = (loss_matrix * mask.to(logits.dtype)).sum() / mask.sum().clamp(min=1)
+                if mask.any():
+                    loss_fct = nn.BCEWithLogitsLoss()
+                    loss = loss_fct(logits[mask], labels[mask].to(logits.dtype))
+                else:
+                    loss = logits[mask].sum() * 0.0
             else:
                 raise ValueError(f"Unsupported problem_type: {self.problem_type}")
 

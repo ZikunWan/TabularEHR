@@ -4,7 +4,7 @@ deepspeed --num_gpus=8 ./pretraining/next_token_prediction.py \
     --root_dir "/data/zikun_workspace/mimic-iv-3.1_tabular" \
     --train_info_path \
         "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv" \
-    --table_text_embedding "/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt" \
+    --table_text_embedding "/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings_stage2.pt" \
     --eicu_root_dir "/data/zikun_workspace/eicu-crd" \
     --eicu_processed_dir "/data/zikun_workspace/eicu-crd/processed" \
     --eicu_train_info_path \
@@ -28,5 +28,5 @@ deepspeed --num_gpus=8 ./pretraining/next_token_prediction.py \
     --bf16 true \
     --report_to "wandb" \
     --wandb_project "Next_Token_Prediction" \
-    --run_name "next_token_prediction_mimic_eicu_ehrshot" \
-    --output_dir "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction_mimic_eicu_ehrshot"
+    --run_name "next_token_prediction" \
+    --output_dir "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction"

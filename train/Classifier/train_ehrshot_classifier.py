@@ -63,7 +63,7 @@ class DataArguments:
     data_dir: str = field(default="/data/EHR_data_public/EHRSHOT", metadata={"help": "Root directory for EHRSHOT data"})
     train_info_path: str = field(default="/data/EHR_data_public/EHRSHOT/index/ehrshot_train.csv", metadata={"help": "Path to split csv"})
     val_info_path: str = field(default="/data/EHR_data_public/EHRSHOT/index/ehrshot_val.csv", metadata={"help": "Path to validation split csv"})
-    embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings.pt", 
+    embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings_stage2.pt", 
                                   metadata={"help": "Path to pre-computed embedding cache"})
     max_train_samples: Optional[int] = field(default=None, metadata={"help": "Limit training samples"})
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})

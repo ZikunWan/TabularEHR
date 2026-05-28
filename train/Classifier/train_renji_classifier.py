@@ -71,7 +71,7 @@ class ModelArguments:
 class DataArguments:
     max_table_len: int = field(metadata={"help": "Keep only the most recent N table rows before encoding"})
     data_dir: str = field(default="/data/EHR_data_public/Renji")
-    embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/renji/text_embeddings.pt")
+    embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/renji/text_embeddings_stage2.pt")
     max_train_samples: Optional[int] = field(default=None)
     type_vocab_file: str = field(default="/data/zikun_workspace/code/data/type_vocab.json")
     query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt")
@@ -94,6 +94,7 @@ def main():
         training_args.warmup_steps = 100
     training_args.warmup_ratio = 0.0
     training_args.weight_decay = 0.01
+    training_args.adam_epsilon = 1e-6
     training_args.seed = 42
     training_args.logging_strategy = "steps"
     training_args.logging_steps = 10
@@ -105,6 +106,7 @@ def main():
     training_args.remove_unused_columns = False
     training_args.report_to = ["wandb"]
     training_args.save_safetensors = True
+    training_args.logging_nan_inf_filter = False
     
     if training_args.wandb_project:
         os.environ["WANDB_PROJECT"] = training_args.wandb_project

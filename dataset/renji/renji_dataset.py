@@ -57,21 +57,21 @@ class RenjiDataset(Dataset):
 
     DRUG_CONC_RANGES = {
         'Tacrolimus_Conc': [
-            (0, 30, 8.0, 12.0),
-            (31, 180, 7.0, 10.0),
-            (181, 365, 5.0, 8.0),
+            (0, 31, 8.0, 12.0),
+            (31, 181, 7.0, 10.0),
+            (181, 366, 5.0, 8.0),
             (366, float('inf'), 4.0, 6.0),
         ],
         'CsA_Trough': [
-            (0, 30, 150.0, 200.0),
-            (31, 180, 120.0, 150.0),
-            (181, 365, 100.0, 120.0),
+            (0, 31, 150.0, 200.0),
+            (31, 181, 120.0, 150.0),
+            (181, 366, 100.0, 120.0),
             (366, float('inf'), 80.0, 120.0),
         ],
         'CsA_Peak': [
-            (0, 30, 1000.0, 1200.0),
-            (31, 180, 800.0, 1000.0),
-            (181, 365, 500.0, 800.0),
+            (0, 31, 1000.0, 1200.0),
+            (31, 181, 800.0, 1000.0),
+            (181, 366, 500.0, 800.0),
             (366, float('inf'), 400.0, 600.0),
         ],
     }
@@ -618,7 +618,7 @@ class RenjiDataset(Dataset):
         elapsed_days = current_day - first_day
 
         for day_min, day_max, low, high in self.DRUG_CONC_RANGES[lab_item]:
-            if day_min <= elapsed_days <= day_max:
+            if day_min <= elapsed_days < day_max:
                 return low, high, unit, f"{low} - {high}"
 
         raise ValueError(f"No drug concentration range for {lab_item} at elapsed_days={elapsed_days}")

@@ -49,7 +49,7 @@ for i in "${!PRETRAIN_NAMES[@]}"; do
 
         TRAIN_INFO_PATH="${TASK_INDEX_ROOT}/train/${TASK}.csv"
         VAL_INFO_PATH="${TASK_INDEX_ROOT}/val/${TASK}.csv"
-        OUTPUT_DIR="/data/zikun_workspace/checkpoints/ehr_bench/${TASK}/table_encoder/llm_query_${PRETRAIN_NAME}_mimic_eicu_ehrshot"
+        OUTPUT_DIR="/data/zikun_workspace/checkpoints/ehr_bench/${TASK}"
 
         cd /data/zikun_workspace/code/train/Classifier
         deepspeed --num_gpus=$NUM_GPUS train_ehr_bench_classifier.py \

@@ -9,11 +9,11 @@ Usage:
         --final-output /data/zikun_workspace/.cache/embeddings/renji/text_embeddings_clinicalbert.pt
 
     torchrun --nproc_per_node=4 preprocess/Renji/3_generate_text_embeddings.py --stage encode \
-        --model-path /data/zikun_workspace/checkpoints/pretraining/text_encoder_stage1/epoch_100.pt \
+        --model-path /data/zikun_workspace/checkpoints/pretraining/knowledge_encode/epoch_100.pt \
         --final-output /data/zikun_workspace/.cache/embeddings/renji/text_embeddings_stage1.pt
 
     torchrun --nproc_per_node=4 preprocess/Renji/3_generate_text_embeddings.py --stage encode \
-        --model-path /data/zikun_workspace/checkpoints/pretraining/text_encoder_stage2/epoch_5.pt \
+        --model-path /data/zikun_workspace/checkpoints/knowledge_encoder/clinicalBERT_after_stage2/epoch_5.pt \
         --final-output /data/zikun_workspace/.cache/embeddings/renji/text_embeddings_stage2.pt
 """
 import argparse

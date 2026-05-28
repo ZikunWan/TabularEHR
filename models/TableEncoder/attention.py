@@ -94,6 +94,50 @@ class FlashAttention(nn.Module):
         return self._attn_gradients
 
 
+class CrossFlashAttention(nn.Module):
+    def __init__(self, dim, num_heads=12, qkv_bias=True, attn_drop=0., proj_drop=0.):
+        super().__init__()
+        self.num_heads = num_heads
+        self.attn_drop_prob = attn_drop
+
+        self.q_proj = nn.Linear(dim, dim, bias=qkv_bias)
+        self.k_proj = nn.Linear(dim, dim, bias=qkv_bias)
+        self.v_proj = nn.Linear(dim, dim, bias=qkv_bias)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, query, context, context_mask=None):
+        """
+        :param query: Shape (batch_size, query_len, hidden_dim)
+        :param context: Shape (batch_size, context_len, hidden_dim)
+        :param context_mask: Shape (batch_size, context_len), 1 = attend, 0 = ignore
+        """
+        batch_size, query_len, hidden_dim = query.shape
+        context_len = context.shape[1]
+        head_dim = hidden_dim // self.num_heads
+
+        q = self.q_proj(query).contiguous().view(batch_size, query_len, self.num_heads, head_dim).transpose(1, 2)
+        k = self.k_proj(context).contiguous().view(batch_size, context_len, self.num_heads, head_dim).transpose(1, 2)
+        v = self.v_proj(context).contiguous().view(batch_size, context_len, self.num_heads, head_dim).transpose(1, 2)
+
+        attn_mask = None
+        if context_mask is not None:
+            attn_mask = context_mask.contiguous().view(batch_size, 1, 1, context_len).bool()
+
+        x = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            dropout_p=self.attn_drop_prob if self.training else 0.0,
+            is_causal=False,
+        )
+        x = x.transpose(1, 2).contiguous().reshape(batch_size, query_len, hidden_dim)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+
 class RMSNorm(nn.Module):
     def __init__(self, dim, eps=1e-8):
         super().__init__()
