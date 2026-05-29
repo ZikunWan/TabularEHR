@@ -39,7 +39,7 @@ class DataArguments:
     processed_dir: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/eicu-crd/processed", metadata={"help": "Path to processed eICU folder"})
     sample_info_val_path: Optional[str] = field(default=None, metadata={"help": "Path to eICU val sample-info JSON"})
     sample_info_test_path: Optional[str] = field(default=None, metadata={"help": "Path to eICU test sample-info JSON"})
-    embedding_cache: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/.cache/embeddings/eicu/text_embeddings.pt", metadata={"help": "Path to pre-computed embedding cache"})
+    embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/eicu/text_embeddings_stage2.pt", metadata={"help": "Path to pre-computed embedding cache"})
     checkpoint_dir: str = field(default=None, metadata={"help": "Path to the checkpoint directory"})
     batch_size: int = field(default=64, metadata={"help": "Evaluation batch size"})
     max_table_len: Optional[int] = field(default=None, metadata={"help": "Keep only the most recent N table rows before encoding"})

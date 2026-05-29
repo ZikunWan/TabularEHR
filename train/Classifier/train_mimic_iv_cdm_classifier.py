@@ -75,7 +75,7 @@ class DataArguments:
         metadata={"help": "Task name: 'MIMIC-IV-CDM Main Disease Diagnoses' or 'MIMIC-IV-CDM ICD Code Diagnoses'"}
     )
     embedding_cache: str = field(
-        default="/data/zikun_workspace/.cache/embeddings/mimic_iv_cdm/text_embeddings.pt",
+        default="/data/zikun_workspace/.cache/embeddings/mimic_iv_cdm/text_embeddings_stage2.pt",
         metadata={"help": "Path to pre-computed embedding cache"}
     )
     max_train_samples: Optional[int] = field(default=None, metadata={"help": "Limit training samples"})

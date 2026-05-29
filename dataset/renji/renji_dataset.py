@@ -141,6 +141,7 @@ class RenjiDataset(Dataset):
         self.table_mode = table_mode
         self.target_metrics = target_metrics
         self.target_prediction_points = target_prediction_points
+        self.active_points = list(target_prediction_points) if target_prediction_points is not None else list(self.ALL_POINTS)
         self.shuffle = shuffle
         self.return_meds = return_meds
         self.task_schema = get_task_info()
@@ -795,7 +796,7 @@ class RenjiDataset(Dataset):
         _rank0_print(f"[{self.split}] Building sample index (mode=multi_label)...")
         
         # Determine which prediction points to use
-        active_points = self.target_prediction_points
+        active_points = self.active_points
         
         samples = []
         
@@ -1444,10 +1445,10 @@ class RenjiDataset(Dataset):
         age_years = (report_date - dob).days / 365.25
         
         # PREPARE TARGETS
-        labels_matrix = torch.full((len(self.ALL_POINTS), len(self.ALL_METRICS)), -100, dtype=torch.float32)
+        labels_matrix = torch.full((len(self.active_points), len(self.ALL_METRICS)), -100, dtype=torch.float32)
 
         patient_labels = self.labels_df.loc[sample['fname_key']]
-        target_point_idx = self.ALL_POINTS.index(prediction_point)
+        target_point_idx = self.active_points.index(prediction_point)
         _, target_prefix, _ = self.PREDICTION_POINTS[prediction_point]
         for m_idx, met in enumerate(self.ALL_METRICS):
             col_name = f"{target_prefix}_{met}"

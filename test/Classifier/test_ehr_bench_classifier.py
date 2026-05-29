@@ -51,7 +51,7 @@ class DataArguments:
         metadata={"help": "Path to sample info CSV. If None, uses <data_dir>/task_index/test/<task_name>.csv"}
     )
     embedding_cache: str = field(
-        default="/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings.pt",
+        default="/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings_stage2.pt",
         metadata={"help": "Path to pre-computed embedding cache"}
     )
     checkpoint_dir: str = field(default=None, metadata={"help": "Path to the checkpoint directory"})

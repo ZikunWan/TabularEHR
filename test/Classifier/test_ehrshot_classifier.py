@@ -40,7 +40,7 @@ class ModelArguments:
 class DataArguments:
     data_dir: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/EHRSHOT", metadata={"help": "Root directory for EHRSHOT data"})
     split_info_path: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/EHRSHOT/index/ehrshot_test.csv", metadata={"help": "Path to test split csv"})
-    embedding_cache: str = field(default="/home/ma-user/sfs_turbo/sai6/zkwan/.cache/embeddings/ehrshot/text_embeddings.pt", 
+    embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings_stage2.pt", 
                                   metadata={"help": "Path to pre-computed embedding cache"})
     checkpoint_dir: str = field(default=None, metadata={"help": "Path to the checkpoint directory"})
     batch_size: int = field(default=64, metadata={"help": "Evaluation batch size"})

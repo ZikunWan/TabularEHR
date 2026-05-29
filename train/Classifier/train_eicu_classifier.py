@@ -80,7 +80,7 @@ class DataArguments:
         metadata={"help": "Task name (e.g., mortality, readmission, los_3day, creatinine, diagnosis)"}
     )
     embedding_cache: str = field(
-        default="/data/zikun_workspace/.cache/embeddings/eicu/text_embeddings.pt",
+        default="/data/zikun_workspace/.cache/embeddings/eicu/text_embeddings_stage2.pt",
         metadata={"help": "Path to pre-computed embedding cache"}
     )
     type_vocab_file: str = field(

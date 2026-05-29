@@ -47,7 +47,7 @@ class ModelArguments:
 @dataclass
 class DataArguments:
     data_dir: str = field(default="/data/EHR_data_public/mimic-iv-cdm", metadata={"help": "Root directory for MIMIC-IV-CDM data"})
-    embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/mimic_iv_cdm/text_embeddings.pt",
+    embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/mimic_iv_cdm/text_embeddings_stage2.pt",
                                   metadata={"help": "Path to pre-computed embedding cache"})
     checkpoint_dir: str = field(default=None, metadata={"help": "Path to the checkpoint directory"})
     batch_size: int = field(default=64, metadata={"help": "Evaluation batch size"})

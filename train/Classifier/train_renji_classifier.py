@@ -52,6 +52,8 @@ from utils.load_embedding import (
 from utils.collate import create_query_collate_fn
 from utils.query_embedding import build_query_embeddings
 
+ACTIVE_POINTS = ["day30", "day180", "day365"]
+
 @dataclass
 class ModelArguments:
     pretrained_path: Optional[str] = field(default=None, metadata={"help": "Path to pre-trained model checkpoint (safetensors or bin) or TAPAS base"})
@@ -126,12 +128,12 @@ def main():
     train_dataset = RenjiDataset(
         root_dir=data_args.data_dir, split="train", table_mode="table_only", shuffle=True,
         max_samples=data_args.max_train_samples,
-        target_prediction_points=["day0", "day30", "day180", "day365"],
+        target_prediction_points=ACTIVE_POINTS,
     )
 
     query_texts = {}
     query_template = RenjiDataset.TASK_INFO["multi_label_prediction"]["instruction_template"]
-    for point_key in RenjiDataset.ALL_POINTS:
+    for point_key in ACTIVE_POINTS:
         _, _, readable_point = RenjiDataset.TASK_PREDICTION_POINTS[point_key]
         instruction = query_template.format(prediction_point=f"{readable_point} post-transplant")
         query_texts[instruction] = instruction
@@ -147,9 +149,9 @@ def main():
         type_vocab_size=len(type_vocab),
         max_table_len=data_args.max_table_len,
         dim_out=query_dim,
-        num_points=len(RenjiDataset.ALL_POINTS),
+        num_points=len(ACTIVE_POINTS),
         num_metrics=len(RenjiDataset.ALL_METRICS),
-        num_classes=len(RenjiDataset.ALL_POINTS) * len(RenjiDataset.ALL_METRICS),
+        num_classes=len(ACTIVE_POINTS) * len(RenjiDataset.ALL_METRICS),
         problem_type="multi_label_classification"
     )
 
