@@ -26,10 +26,10 @@ for TASK in "${TASKS[@]}"; do
     
     deepspeed --num_gpus=$NUM_GPUS train_ehrshot_classifier.py \
         --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
-        --output_dir "/data/zikun_workspace/checkpoints/ehrshot/${TASK}" \
+        --output_dir "/data/zikun_workspace/checkpoints/ehrshot/${TASK}/after_phenotype_query_contrastive_learning" \
         --run_name "${TASK}" \
         --task_name "$TASK" \
-        --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning" \
+        --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/phenotype_query_contrastive_learning" \
         --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt" \
         --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
         --max_table_len 8192 \

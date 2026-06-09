@@ -5,10 +5,13 @@ import logging
 import torch
 import torch.nn as nn
 import pandas as pd
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from peft import LoraConfig, get_peft_model, PeftModel
 import glob
+from sklearn.metrics import roc_auc_score
+from torch.utils.data import Subset
 from transformers import Trainer, TrainingArguments, HfArgumentParser, set_seed
 from transformers.utils import logging as hf_logging
 
@@ -50,7 +53,8 @@ from utils.load_embedding import (
     load_embedding_cache,
 )
 from utils.collate import create_query_collate_fn
-from utils.query_embedding import build_query_embeddings
+from utils.multilabel_split import select_balanced_multilabel_groups
+from utils.query_embedding import build_task_query_embeddings
 
 ACTIVE_POINTS = ["day30", "day180", "day365"]
 
@@ -77,13 +81,126 @@ class DataArguments:
     max_train_samples: Optional[int] = field(default=None)
     type_vocab_file: str = field(default="/data/zikun_workspace/code/data/type_vocab.json")
     query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt")
+    query_encoder: str = field(default="llm")
     query_llm_model_path: str = field(default="/data/model_weights_public/BlueZeros/EHR-R1-1.7B")
+    knowledge_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2/best.pt")
+    knowledge_encoder_base_model_path: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
     query_max_length: int = field(default=512)
+    monitor_fraction: float = field(
+        default=0.0,
+        metadata={"help": "Patient-level fraction held out from train for balanced monitoring. Set to 0 to disable."},
+    )
+    monitor_seed: int = field(default=42)
 
 
 @dataclass
 class CustomTrainingArguments(TrainingArguments):
     wandb_project: Optional[str] = field(default="Renji")
+    lr_scheduler_type: str = field(default="cosine")
+
+
+def _build_patient_label_vectors(dataset):
+    num_labels = len(ACTIVE_POINTS) * len(RenjiDataset.ALL_METRICS)
+    vectors = {}
+    for sample in dataset.samples:
+        patient_id = sample["fname_key"]
+        labels = vectors.setdefault(patient_id, [None] * num_labels)
+        patient_labels = dataset.labels_df.loc[patient_id]
+        point_key = sample["prediction_point"]
+        point_idx = ACTIVE_POINTS.index(point_key)
+        _, label_prefix, _ = RenjiDataset.PREDICTION_POINTS[point_key]
+        for metric_idx, metric in enumerate(RenjiDataset.ALL_METRICS):
+            column = f"{label_prefix}_{metric}"
+            if column in patient_labels and pd.notna(patient_labels[column]):
+                labels[point_idx * len(RenjiDataset.ALL_METRICS) + metric_idx] = int(
+                    patient_labels[column]
+                )
+    return vectors
+
+
+def _split_train_monitor_dataset(dataset, monitor_fraction, seed):
+    if not 0.0 < monitor_fraction < 1.0:
+        raise ValueError("monitor_fraction must be between 0 and 1")
+
+    labels_by_patient = _build_patient_label_vectors(dataset)
+    monitor_patients_count = max(1, round(len(labels_by_patient) * monitor_fraction))
+    monitor_patients = set(
+        select_balanced_multilabel_groups(
+            labels_by_group=labels_by_patient,
+            holdout_size=monitor_patients_count,
+            seed=seed,
+        )
+    )
+    train_indices = [
+        idx for idx, sample in enumerate(dataset.samples) if sample["fname_key"] not in monitor_patients
+    ]
+    monitor_indices = [
+        idx for idx, sample in enumerate(dataset.samples) if sample["fname_key"] in monitor_patients
+    ]
+
+    monitor_vectors = [labels_by_patient[patient_id] for patient_id in monitor_patients]
+    balanced_tasks = 0
+    absolute_balance_errors = []
+    for label_idx in range(len(monitor_vectors[0])):
+        values = [vector[label_idx] for vector in monitor_vectors if vector[label_idx] is not None]
+        positives = sum(values)
+        negatives = len(values) - positives
+        if positives > 0 and negatives > 0:
+            balanced_tasks += 1
+            absolute_balance_errors.append(abs(positives / len(values) - 0.5))
+
+    mean_balance_error = (
+        sum(absolute_balance_errors) / len(absolute_balance_errors)
+        if absolute_balance_errors
+        else float("nan")
+    )
+    rank0_print(
+        f"Balanced monitor split: patients={len(monitor_patients)}/{len(labels_by_patient)}, "
+        f"samples={len(monitor_indices)}, train_samples={len(train_indices)}, "
+        f"tasks_with_both_classes={balanced_tasks}, "
+        f"mean_abs_positive_rate_minus_0.5={mean_balance_error:.4f}"
+    )
+    return Subset(dataset, train_indices), Subset(dataset, monitor_indices)
+
+
+def compute_renji_metrics(eval_pred):
+    logits = eval_pred.predictions
+    if isinstance(logits, tuple):
+        logits = logits[0]
+    logits = np.asarray(logits)
+    labels = np.asarray(eval_pred.label_ids)
+    probabilities = 1.0 / (1.0 + np.exp(-np.clip(logits, -30.0, 30.0)))
+    mask = labels != -100
+
+    if not np.any(mask):
+        return {"auroc": 0.5, "micro_auroc": 0.5, "accuracy": 0.0, "evaluated_tasks": 0}
+
+    flat_labels = labels[mask].astype(int)
+    flat_probabilities = probabilities[mask]
+    flat_predictions = (flat_probabilities >= 0.5).astype(int)
+    micro_auroc = (
+        roc_auc_score(flat_labels, flat_probabilities)
+        if np.unique(flat_labels).size == 2
+        else 0.5
+    )
+
+    task_aurocs = []
+    for point_idx in range(labels.shape[1]):
+        for metric_idx in range(labels.shape[2]):
+            task_mask = mask[:, point_idx, metric_idx]
+            task_labels = labels[task_mask, point_idx, metric_idx].astype(int)
+            if np.unique(task_labels).size != 2:
+                continue
+            task_probabilities = probabilities[task_mask, point_idx, metric_idx]
+            task_aurocs.append(roc_auc_score(task_labels, task_probabilities))
+
+    return {
+        "auroc": float(np.mean(task_aurocs)) if task_aurocs else 0.5,
+        "micro_auroc": float(micro_auroc),
+        "accuracy": float(np.mean(flat_predictions == flat_labels)),
+        "positive_rate": float(np.mean(flat_labels)),
+        "evaluated_tasks": len(task_aurocs),
+    }
 
 
 def main():
@@ -91,10 +208,8 @@ def main():
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     quiet_non_main_process_logs()
     
-    training_args.lr_scheduler_type = "cosine"
-    if training_args.warmup_steps == 0:
+    if training_args.warmup_steps == 0 and not training_args.warmup_ratio:
         training_args.warmup_steps = 100
-    training_args.warmup_ratio = 0.0
     training_args.weight_decay = 0.01
     training_args.adam_epsilon = 1e-6
     training_args.seed = 42
@@ -130,6 +245,18 @@ def main():
         max_samples=data_args.max_train_samples,
         target_prediction_points=ACTIVE_POINTS,
     )
+    monitor_dataset = None
+    if data_args.monitor_fraction > 0:
+        if training_args.eval_strategy == "no":
+            raise ValueError("monitor_fraction requires --eval_strategy steps or epoch")
+        train_dataset, monitor_dataset = _split_train_monitor_dataset(
+            dataset=train_dataset,
+            monitor_fraction=data_args.monitor_fraction,
+            seed=data_args.monitor_seed,
+        )
+        training_args.metric_for_best_model = "auroc"
+        training_args.greater_is_better = True
+        training_args.load_best_model_at_end = True
 
     query_texts = {}
     query_template = RenjiDataset.TASK_INFO["multi_label_prediction"]["instruction_template"]
@@ -137,12 +264,16 @@ def main():
         _, _, readable_point = RenjiDataset.TASK_PREDICTION_POINTS[point_key]
         instruction = query_template.format(prediction_point=f"{readable_point} post-transplant")
         query_texts[instruction] = instruction
-    query_embeddings_by_text, query_dim = build_query_embeddings(
-        query_texts,
-        data_args.query_embedding_cache,
-        data_args.query_llm_model_path,
-        data_args.query_max_length,
+    query_embeddings_by_text, query_dim = build_task_query_embeddings(
+        query_texts=query_texts,
+        cache_path=data_args.query_embedding_cache,
+        query_encoder=data_args.query_encoder,
+        max_length=data_args.query_max_length,
+        query_llm_model_path=data_args.query_llm_model_path,
+        knowledge_encoder_path=data_args.knowledge_encoder_path,
+        knowledge_encoder_base_model_path=data_args.knowledge_encoder_base_model_path,
     )
+    rank0_print(f"Query encoder={data_args.query_encoder}, query_dim={query_dim}")
 
     encoder_config = LongTableEncoder1DConfig(
         text_dim=text_dim,
@@ -182,6 +313,7 @@ def main():
     trainer = Trainer(
         model=model, args=training_args,
         train_dataset=train_dataset,
+        eval_dataset=monitor_dataset,
         data_collator=create_query_collate_fn(
             type_vocab,
             max_table_len=data_args.max_table_len,
@@ -189,6 +321,7 @@ def main():
             pad_idx=pad_idx,
             query_embeddings_by_text=query_embeddings_by_text,
         ),
+        compute_metrics=compute_renji_metrics if monitor_dataset is not None else None,
     )
 
     resume_ckpt = None

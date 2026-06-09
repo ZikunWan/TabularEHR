@@ -42,7 +42,7 @@ from utils.metrics import compute_classification_metrics
 from utils.samplers import TrainerWithBatchSampler, build_train_batch_sampler
 from utils.weight_loader import load_model_weights
 from utils.collate import create_query_collate_fn
-from utils.query_embedding import build_query_embeddings
+from utils.query_embedding import build_task_query_embeddings
 
 # All EHR-Bench risk prediction tasks
 ALL_RISK_PREDICTION_TASKS = [
@@ -108,7 +108,10 @@ class DataArguments:
         metadata={"help": "Path to unified type vocabulary JSON file"}
     )
     query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt")
+    query_encoder: str = field(default="llm")
     query_llm_model_path: str = field(default="/data/model_weights_public/BlueZeros/EHR-R1-1.7B")
+    knowledge_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2/best.pt")
+    knowledge_encoder_base_model_path: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
     query_max_length: int = field(default=512)
     max_train_samples: Optional[int] = field(default=None, metadata={"help": "Limit training samples"})
     max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Limit evaluation samples"})
@@ -212,12 +215,16 @@ def main():
 
     task_info = get_task_info()[data_args.task_name]
     query_key = f"ehr_bench:{data_args.task_name}"
-    query_embeddings, query_dim = build_query_embeddings(
-        {query_key: task_info["instruction"]},
-        data_args.query_embedding_cache,
-        data_args.query_llm_model_path,
-        data_args.query_max_length,
+    query_embeddings, query_dim = build_task_query_embeddings(
+        query_texts={query_key: task_info["instruction"]},
+        cache_path=data_args.query_embedding_cache,
+        query_encoder=data_args.query_encoder,
+        max_length=data_args.query_max_length,
+        query_llm_model_path=data_args.query_llm_model_path,
+        knowledge_encoder_path=data_args.knowledge_encoder_path,
+        knowledge_encoder_base_model_path=data_args.knowledge_encoder_base_model_path,
     )
+    rank0_print(f"Query encoder={data_args.query_encoder}, query_dim={query_dim}")
 
     # 5. Model Config — binary classification with BCEWithLogitsLoss
     encoder_config = LongTableEncoder1DConfig(

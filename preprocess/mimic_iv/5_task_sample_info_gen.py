@@ -721,6 +721,17 @@ def _new_event_task_bucket():
     return {bucket: [] for bucket in TASK_BUCKETS}
 
 
+def _normalize_task_bucket(task_name, task_meta):
+    task_type = task_meta["task_type"]
+    if task_type in TASK_BUCKETS:
+        return task_type
+    # In MIMIC preprocessing, classification-style tasks are routed through the
+    # decision-making extraction path.
+    if task_type in {"multi_class_classification", "multi_label_classification"}:
+        return "decision_making"
+    return None
+
+
 def obtain_event_task(args, task_info):
     event_task = {} # {event: {"decision_making": [], "risk_prediction": [], "pretraining": [], "generative_task": []}}
 
@@ -733,8 +744,8 @@ def obtain_event_task(args, task_info):
     # print(f"DEBUG: Tasks after filter: {list(task_info.keys())}")
 
     for task in task_info:
-        task_type = task_info[task]["task_type"]
-        if task_type not in TASK_BUCKETS:
+        task_type = _normalize_task_bucket(task, task_info[task])
+        if task_type is None:
             continue
 
         event = task_info[task].get("event")

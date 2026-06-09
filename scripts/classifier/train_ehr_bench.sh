@@ -35,9 +35,9 @@ for TASK in "${TASKS[@]}"; do
     
     deepspeed --num_gpus=$NUM_GPUS train_ehr_bench_classifier.py \
         --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
-        --output_dir "/data/zikun_workspace/checkpoints/ehr_bench/${TASK}/table_encoder/llm_query_next_token" \
+        --output_dir "/data/zikun_workspace/checkpoints/ehr_bench/${TASK}/table_encoder/after_phenotype_query_contrastive_learning" \
         --run_name "ehr_bench_${TASK}_llm_query_next_token" \
-        --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/next_token_prediction" \
+        --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/phenotype_query_contrastive_learning" \
         --task_name "$TASK" \
         --train_sample_info_path "$TRAIN_INFO_PATH" \
         --val_sample_info_path "$VAL_INFO_PATH" \

@@ -7,7 +7,7 @@ cd train/Classifier
 TASKS=(
     "mortality"
     "long_term_mortality"
-    "rea  dmission"
+    "readmission"
     "los_3day"
     "los_7day"
     "creatinine"
@@ -21,10 +21,10 @@ TASKS=(
 for TASK in "${TASKS[@]}"; do
     deepspeed --num_gpus=$NUM_GPUS train_eicu_classifier.py \
     --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
-    --output_dir "/data/zikun_workspace/checkpoints/eicu/${TASK}" \
-    --run_name "eicu_${TASK}" \
+    --output_dir "/data/zikun_workspace/checkpoints/eicu/phenotype_query_contrastive_learning/${TASK}" \
+    --run_name "eicu_${TASK}_phenotype_query_contrastive_learning" \
     --task_name "$TASK" \
-    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/contrastive_learning" \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/phenotype_query_contrastive_learning" \
     --max_table_len 16384 \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 32 \

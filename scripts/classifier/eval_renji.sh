@@ -6,10 +6,13 @@ cd "$(dirname "$0")/../../test/Classifier"
 CUDA_VISIBLE_DEVICES=0 python test_renji_classifier.py \
     --data_dir /data/EHR_data_public/Renji \
     --embedding_cache /data/zikun_workspace/.cache/embeddings/renji/text_embeddings_stage2.pt \
-    --checkpoint_dir /data/zikun_workspace/checkpoints/renji/after_contrastive_learning_no_day0 \
+    --checkpoint_dir /data/zikun_workspace/checkpoints/renji/phenotype_metric_learning \
     --split test \
     --type_vocab_file /data/zikun_workspace/code/data/type_vocab.json \
-    --query_embedding_cache /data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt \
-    --query_llm_model_path /data/model_weights_public/BlueZeros/EHR-R1-1.7B \
-    --max_table_len 16384 \
-    --batch_size 32
+    --query_encoder knowledge \
+    --query_embedding_cache /data/zikun_workspace/.cache/embeddings/query_classifier/renji_task_query_knowledge_embeddings.pt \
+    --knowledge_encoder_path /data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2/best.pt \
+    --knowledge_encoder_base_model_path /data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT \
+    --query_max_length 128 \
+    --max_table_len 4096 \
+    --batch_size 256

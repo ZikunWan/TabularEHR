@@ -26,7 +26,7 @@ from utils.load_embedding import (
     get_special_token_indices,
     load_embedding_cache,
 )
-from utils.query_embedding import build_query_embeddings
+from utils.query_embedding import build_task_query_embeddings
 from utils.weight_loader import load_model_weights
 
 LABEL_MAP = {"yes": 1, "no": 0}
@@ -63,7 +63,10 @@ class DataArguments:
         metadata={"help": "Path to type vocabulary JSON file"}
     )
     query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt")
+    query_encoder: str = field(default="llm")
     query_llm_model_path: str = field(default="/data/model_weights_public/BlueZeros/EHR-R1-1.7B")
+    knowledge_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2/best.pt")
+    knowledge_encoder_base_model_path: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
     query_max_length: int = field(default=512)
     seed: int = field(default=42, metadata={"help": "Random seed"})
     lazy_mode: bool = field(default=True, metadata={"help": "Load samples lazily from parquet to save memory"})
@@ -118,12 +121,16 @@ def main():
 
     task_info = get_task_info()[data_args.task_name]
     query_key = f"ehr_bench:{data_args.task_name}"
-    query_embeddings, query_dim = build_query_embeddings(
-        {query_key: task_info["instruction"]},
-        data_args.query_embedding_cache,
-        data_args.query_llm_model_path,
-        data_args.query_max_length,
+    query_embeddings, query_dim = build_task_query_embeddings(
+        query_texts={query_key: task_info["instruction"]},
+        cache_path=data_args.query_embedding_cache,
+        query_encoder=data_args.query_encoder,
+        max_length=data_args.query_max_length,
+        query_llm_model_path=data_args.query_llm_model_path,
+        knowledge_encoder_path=data_args.knowledge_encoder_path,
+        knowledge_encoder_base_model_path=data_args.knowledge_encoder_base_model_path,
     )
+    print(f"Query encoder={data_args.query_encoder}, query_dim={query_dim}")
 
     # 5. Model Config — binary classification
     encoder_config = LongTableEncoder1DConfig(

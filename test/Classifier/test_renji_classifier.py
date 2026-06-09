@@ -24,7 +24,7 @@ from utils.load_embedding import (
     load_embedding_cache,
 )
 from utils.collate import create_query_collate_fn
-from utils.query_embedding import build_query_embeddings
+from utils.query_embedding import build_task_query_embeddings
 
 ACTIVE_POINTS = ["day30", "day180", "day365"]
 
@@ -45,7 +45,10 @@ class DataArguments:
     seed: int = field(default=42)
     type_vocab_file: str = field(default="data/type_vocab.json")
     query_embedding_cache: str = field(default="/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt")
+    query_encoder: str = field(default="llm")
     query_llm_model_path: str = field(default="/home/ma-user/modelarts/user-job-dir/LiverTransplantation/model_weights/BlueZeros/EHR-R1-1.7B")
+    knowledge_encoder_path: str = field(default="/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2/best.pt")
+    knowledge_encoder_base_model_path: str = field(default="/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT")
     query_max_length: int = field(default=512)
 
 def main():
@@ -75,12 +78,16 @@ def main():
         _, _, readable_point = RenjiDataset.TASK_PREDICTION_POINTS[point_key]
         instruction = query_template.format(prediction_point=f"{readable_point} post-transplant")
         query_texts[instruction] = instruction
-    query_embeddings_by_text, query_dim = build_query_embeddings(
-        query_texts,
-        data_args.query_embedding_cache,
-        data_args.query_llm_model_path,
-        data_args.query_max_length,
+    query_embeddings_by_text, query_dim = build_task_query_embeddings(
+        query_texts=query_texts,
+        cache_path=data_args.query_embedding_cache,
+        query_encoder=data_args.query_encoder,
+        max_length=data_args.query_max_length,
+        query_llm_model_path=data_args.query_llm_model_path,
+        knowledge_encoder_path=data_args.knowledge_encoder_path,
+        knowledge_encoder_base_model_path=data_args.knowledge_encoder_base_model_path,
     )
+    print(f"Query encoder={data_args.query_encoder}, query_dim={query_dim}")
 
     encoder_config = LongTableEncoder1DConfig(
         text_dim=text_dim,
