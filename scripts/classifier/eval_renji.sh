@@ -6,7 +6,7 @@ cd "$(dirname "$0")/../../test/Classifier"
 CUDA_VISIBLE_DEVICES=0 python test_renji_classifier.py \
     --data_dir /data/EHR_data_public/Renji \
     --embedding_cache /data/zikun_workspace/.cache/embeddings/renji/text_embeddings_stage2.pt \
-    --checkpoint_dir /data/zikun_workspace/checkpoints/renji/phenotype_metric_learning \
+    --checkpoint_dir /data/zikun_workspace/checkpoints/renji/joint_pretrain \
     --split test \
     --type_vocab_file /data/zikun_workspace/code/data/type_vocab.json \
     --query_encoder knowledge \

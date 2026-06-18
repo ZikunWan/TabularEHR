@@ -25,6 +25,9 @@ for TASK in "${TASKS[@]}"; do
     --run_name "eicu_${TASK}_phenotype_query_contrastive_learning" \
     --task_name "$TASK" \
     --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/phenotype_query_contrastive_learning" \
+    --query_encoder llm \
+    --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/eicu_task_query_llm_embeddings.pt" \
+    --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
     --max_table_len 16384 \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 32 \

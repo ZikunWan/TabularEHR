@@ -343,3 +343,52 @@ def create_query_collate_fn(
         return tensors
 
     return collate_fn
+
+
+def create_survival_query_collate_fn(
+    type_vocab=None,
+    max_table_len: Optional[int] = None,
+    text_to_idx: Optional[Dict[str, int]] = None,
+    pad_idx: int = 0,
+    query_embeddings_by_text: Optional[Dict[str, torch.Tensor]] = None,
+):
+    if type_vocab is None:
+        type_vocab = {}
+
+    def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+        batch = [
+            sample
+            for sample in batch
+            if sample.get("measurement_table") is not None
+            and not sample["measurement_table"].empty
+        ]
+        if not batch:
+            raise ValueError("All samples in this batch have empty measurement_table.")
+
+        tables = []
+        for sample in batch:
+            table = sample["measurement_table"]
+            if max_table_len is not None:
+                table = table.tail(max_table_len).reset_index(drop=True)
+            tables.append(table)
+
+        tensors = build_table_token_tensors(
+            tables,
+            text_to_idx=text_to_idx,
+            pad_idx=pad_idx,
+            type_vocab=type_vocab,
+        )
+        tensors["query_embeds"] = torch.stack(
+            [
+                query_embeddings_by_text[str(sample["instruction"])]
+                for sample in batch
+            ]
+        )
+        tensors["stage_ids"] = torch.tensor(
+            [sample["stage_id"] for sample in batch],
+            dtype=torch.long,
+        )
+        tensors["labels"] = torch.stack([sample["output"] for sample in batch])
+        return tensors
+
+    return collate_fn

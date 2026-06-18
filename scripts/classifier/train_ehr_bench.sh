@@ -41,6 +41,9 @@ for TASK in "${TASKS[@]}"; do
         --task_name "$TASK" \
         --train_sample_info_path "$TRAIN_INFO_PATH" \
         --val_sample_info_path "$VAL_INFO_PATH" \
+        --query_encoder llm \
+        --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/ehr_bench_task_query_llm_embeddings.pt" \
+        --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
         --max_table_len 16384 \
         --per_device_train_batch_size 16 \
         --per_device_eval_batch_size 64 \

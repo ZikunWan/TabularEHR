@@ -16,6 +16,15 @@ TASK_INFO = {
         "task_type": "multi_label_classification",
         "instruction_template": "Based on the patient's clinical history up to {prediction_point}, predict all metrics across all future windows.",
     },
+    "tacrolimus_abnormal_survival": {
+        "metric": "survival",
+        "task_type": "time_to_event",
+        "instruction_template": (
+            "Based on the patient's clinical history through postoperative day "
+            "{prediction_day}, estimate the daily hazard of the first abnormal "
+            "tacrolimus concentration during {stage_window}."
+        ),
+    },
 }
 
 ALL_METRICS = sorted(

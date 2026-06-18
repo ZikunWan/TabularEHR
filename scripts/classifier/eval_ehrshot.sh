@@ -34,7 +34,8 @@ for task_idx in "${!TASKS[@]}"; do
         --checkpoint_dir "/data/zikun_workspace/checkpoints/ehrshot/${task_name}/after_phenotype_query_contrastive_learning" \
         --task_name "$task_name" \
         --type_vocab_file /data/zikun_workspace/code/data/type_vocab.json \
-        --query_embedding_cache /data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt \
+        --query_encoder llm \
+        --query_embedding_cache /data/zikun_workspace/.cache/embeddings/query_classifier/ehrshot_task_query_llm_embeddings.pt \
         --query_llm_model_path /data/model_weights_public/BlueZeros/EHR-R1-1.7B \
         --max_table_len 8192 \
         --batch_size 32 \

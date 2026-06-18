@@ -1,0 +1,53 @@
+#!/bin/bash
+set -euo pipefail
+
+MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --num_gpus=8 ./pretraining/phenotype_triplet_learning.py \
+    --deepspeed "./ds_config_zero2.json" \
+    --dataset mimic_iv eicu ehrshot \
+    --root_dir "/data/zikun_workspace/mimic-iv-3.1_tabular" \
+    --sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv" \
+    --val_sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val/next_token_prediction.csv" \
+    --table_text_embedding "/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings_stage2.pt" \
+    --eicu_root_dir "/data/zikun_workspace/eicu-crd" \
+    --eicu_processed_dir "/data/zikun_workspace/eicu-crd/processed" \
+    --eicu_sample_info_path "/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_train.json" \
+    --eicu_val_sample_info_path "/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_val.json" \
+    --eicu_table_text_embedding "/data/zikun_workspace/.cache/embeddings/eicu/text_embeddings_stage2.pt" \
+    --ehrshot_root_dir "/data/EHR_data_public/EHRSHOT" \
+    --ehrshot_sample_info_path "/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_train.csv" \
+    --ehrshot_val_sample_info_path "/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_val.csv" \
+    --ehrshot_table_text_embedding "/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings_stage2.pt" \
+    --phenotype_spec_path "/data/zikun_workspace/.cache/phenotype_triplet_learning/phenotype_query_specs.json" \
+    --preprocessed_input_dir "/data/zikun_workspace/.cache/phenotype_triplet_learning/inputs" \
+    --preprocessed_inputs_only true \
+    --max_table_len 4096 \
+    --min_table_rows 2 \
+    --per_device_train_batch_size 32 \
+    --per_device_eval_batch_size 32 \
+    --gradient_accumulation_steps 1 \
+    --dataloader_num_workers 8 \
+    --learning_rate 1e-5 \
+    --lr_scheduler_type "cosine" \
+    --min_lr_ratio 0.1 \
+    --warmup_steps 100 \
+    --weight_decay 0.01 \
+    --triplet_alpha 0.001 \
+    --positive_k 3 \
+    --min_clinical_gap 0.1 \
+    --min_shared_phenotypes 3 \
+    --covariance_shrinkage 0.1 \
+    --covariance_max_samples 50000 \
+    --covariance_rank 64 \
+    --clinical_reference_path "./data/phenotype_triplet_reference_scales.csv" \
+    --num_train_epochs 5 \
+    --logging_steps 10 \
+    --save_steps 200 \
+    --eval_strategy "steps" \
+    --eval_steps 200 \
+    --save_total_limit 1 \
+    --metric_for_best_model "eval_loss" \
+    --greater_is_better false \
+    --wandb_project "Phenotype_Triplet_Learning" \
+    --run_name "phenotype_triplet_learning" \
+    --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/task_query_classification" \
+    --output_dir "/data/zikun_workspace/checkpoints/pretraining/phenotype_triplet_learning"

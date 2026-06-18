@@ -12,11 +12,25 @@ TASK_INDEX_ROOT="/data/zikun_workspace/mimic-iv-3.1_tabular/task_index"
 PRETRAIN_NAMES=(
     "next_token_prediction"
     "task_query_classification"
+    "phenotype_metric_learning"
 )
 
 PRETRAIN_PATHS=(
     "${CHECKPOINT_ROOT}/pretraining/next_token_prediction"
     "${CHECKPOINT_ROOT}/pretraining/task_query_classification"
+    "${CHECKPOINT_ROOT}/pretraining/phenotype_metric_learning"
+)
+
+QUERY_ENCODERS=(
+    "llm"
+    "llm"
+    "knowledge"
+)
+
+DATASETS=(
+    "EHR-Bench"
+    "eICU"
+    "EHRSHOT"
 )
 
 EICU_TASKS=(
@@ -109,7 +123,8 @@ run_mimic_iv_cdm() {
         --pretrained_path "${pretrain_path}" \
         --run_name "mimic_iv_cdm_main_diagnosis_${pretrain_name}" \
         --task_name "MIMIC-IV-CDM Main Disease Diagnoses" \
-        --query_embedding_cache "${CACHE_ROOT}/query_classifier/task_query_llm_embeddings.pt" \
+        --query_encoder llm \
+        --query_embedding_cache "${CACHE_ROOT}/query_classifier/mimic_iv_cdm_task_query_llm_embeddings.pt" \
         --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
         --max_table_len 16384 \
         --per_device_train_batch_size 16 \
@@ -123,7 +138,8 @@ run_mimic_iv_cdm() {
         --checkpoint_dir "${output_dir}" \
         --task_name "MIMIC-IV-CDM Main Disease Diagnoses" \
         --type_vocab_file "${ROOT_DIR}/data/type_vocab.json" \
-        --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt" \
+        --query_encoder llm \
+        --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/mimic_iv_cdm_task_query_llm_embeddings.pt" \
         --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
         --max_table_len 16384
 }
@@ -149,6 +165,9 @@ run_renji() {
         --per_device_train_batch_size 32 \
         --num_train_epochs 50 \
         --learning_rate 1e-5 \
+        --query_encoder llm \
+        --query_embedding_cache "${CACHE_ROOT}/query_classifier/renji_task_query_llm_embeddings.pt" \
+        --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
         --pretrained_path "${pretrain_path}"
 
     cd "${ROOT_DIR}/test/Classifier"
@@ -158,7 +177,8 @@ run_renji() {
         --checkpoint_dir "${output_dir}" \
         --split "test" \
         --type_vocab_file "${ROOT_DIR}/data/type_vocab.json" \
-        --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt" \
+        --query_encoder llm \
+        --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/renji_task_query_llm_embeddings.pt" \
         --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
         --max_table_len 16384
 }
@@ -166,6 +186,8 @@ run_renji() {
 run_eicu() {
     local pretrain_name="$1"
     local pretrain_path="$2"
+    local query_encoder="$3"
+    local query_embedding_cache="${CACHE_ROOT}/query_classifier/eicu_task_query_${query_encoder}_embeddings.pt"
 
     for task_name in "${EICU_TASKS[@]}"; do
         local output_dir="${CHECKPOINT_ROOT}/eicu/${pretrain_name}/${task_name}"
@@ -185,6 +207,8 @@ run_eicu() {
             --task_name "${task_name}" \
             --pretrained_path "${pretrain_path}" \
             --embedding_cache "${CACHE_ROOT}/eicu/text_embeddings_stage2.pt" \
+            --query_encoder "${query_encoder}" \
+            --query_embedding_cache "${query_embedding_cache}" \
             --max_table_len 16384 \
             --per_device_train_batch_size 16 \
             --per_device_eval_batch_size 32 \
@@ -202,7 +226,8 @@ run_eicu() {
             --checkpoint_dir "${output_dir}" \
             --task_name "${task_name}" \
             --type_vocab_file "${ROOT_DIR}/data/type_vocab.json" \
-            --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt" \
+            --query_encoder "${query_encoder}" \
+            --query_embedding_cache "${query_embedding_cache}" \
             --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
             --max_table_len 16384 \
             --batch_size 32
@@ -212,6 +237,8 @@ run_eicu() {
 run_ehr_bench() {
     local pretrain_name="$1"
     local pretrain_path="$2"
+    local query_encoder="$3"
+    local query_embedding_cache="${CACHE_ROOT}/query_classifier/ehr_bench_task_query_${query_encoder}_embeddings.pt"
 
     for task_name in "${EHR_BENCH_TASKS[@]}"; do
         local train_info_path="${TASK_INDEX_ROOT}/train/${task_name}.csv"
@@ -230,11 +257,13 @@ run_ehr_bench() {
         deepspeed --num_gpus="${NUM_GPUS}" train_ehr_bench_classifier.py \
             --deepspeed "${ROOT_DIR}/ds_config_zero2.json" \
             --output_dir "${output_dir}" \
-            --run_name "ehr_bench_${task_name}_llm_query_${pretrain_name}" \
+            --run_name "ehr_bench_${task_name}_${query_encoder}_query_${pretrain_name}" \
             --pretrained_path "${pretrain_path}" \
             --task_name "${task_name}" \
             --train_sample_info_path "${train_info_path}" \
             --val_sample_info_path "${val_info_path}" \
+            --query_encoder "${query_encoder}" \
+            --query_embedding_cache "${query_embedding_cache}" \
             --max_table_len 16384 \
             --per_device_train_batch_size 16 \
             --per_device_eval_batch_size 64 \
@@ -252,7 +281,8 @@ run_ehr_bench() {
             --checkpoint_dir "${output_dir}" \
             --task_name "${task_name}" \
             --type_vocab_file "${ROOT_DIR}/data/type_vocab.json" \
-            --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt" \
+            --query_encoder "${query_encoder}" \
+            --query_embedding_cache "${query_embedding_cache}" \
             --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
             --max_table_len 16384 \
             --batch_size 64 \
@@ -263,6 +293,8 @@ run_ehr_bench() {
 run_ehrshot() {
     local pretrain_name="$1"
     local pretrain_path="$2"
+    local query_encoder="$3"
+    local query_embedding_cache="${CACHE_ROOT}/query_classifier/ehrshot_task_query_${query_encoder}_embeddings.pt"
     local output_root="${CHECKPOINT_ROOT}/ehrshot/${pretrain_name}"
 
     for task_name in "${EHRSHOT_TASKS[@]}"; do
@@ -282,7 +314,8 @@ run_ehrshot() {
             --run_name "ehrshot_${task_name}_${pretrain_name}" \
             --task_name "${task_name}" \
             --pretrained_path "${pretrain_path}" \
-            --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt" \
+            --query_encoder "${query_encoder}" \
+            --query_embedding_cache "${query_embedding_cache}" \
             --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
             --max_table_len 8192 \
             --per_device_train_batch_size 8 \
@@ -301,7 +334,8 @@ run_ehrshot() {
             --checkpoint_dir "${checkpoint_dir}" \
             --task_name "${task_name}" \
             --type_vocab_file "${ROOT_DIR}/data/type_vocab.json" \
-            --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt" \
+            --query_encoder "${query_encoder}" \
+            --query_embedding_cache "${query_embedding_cache}" \
             --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
             --max_table_len 8192 \
             --batch_size 32 \
@@ -309,12 +343,13 @@ run_ehrshot() {
     done
 }
 
-for dataset_name in "MIMIC-IV-CDM" "Renji" "eICU" "EHR-Bench" "EHRSHOT"; do
+for dataset_name in "${DATASETS[@]}"; do
     log_stage "Starting downstream benchmark for ${dataset_name}"
 
     for i in "${!PRETRAIN_NAMES[@]}"; do
         pretrain_name="${PRETRAIN_NAMES[$i]}"
         pretrain_path="${PRETRAIN_PATHS[$i]}"
+        query_encoder="${QUERY_ENCODERS[$i]}"
 
         case "${dataset_name}" in
             "MIMIC-IV-CDM")
@@ -324,13 +359,13 @@ for dataset_name in "MIMIC-IV-CDM" "Renji" "eICU" "EHR-Bench" "EHRSHOT"; do
                 run_renji "${pretrain_name}" "${pretrain_path}"
                 ;;
             "eICU")
-                run_eicu "${pretrain_name}" "${pretrain_path}"
+                run_eicu "${pretrain_name}" "${pretrain_path}" "${query_encoder}"
                 ;;
             "EHR-Bench")
-                run_ehr_bench "${pretrain_name}" "${pretrain_path}"
+                run_ehr_bench "${pretrain_name}" "${pretrain_path}" "${query_encoder}"
                 ;;
             "EHRSHOT")
-                run_ehrshot "${pretrain_name}" "${pretrain_path}"
+                run_ehrshot "${pretrain_name}" "${pretrain_path}" "${query_encoder}"
                 ;;
         esac
     done

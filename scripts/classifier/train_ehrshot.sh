@@ -30,7 +30,8 @@ for TASK in "${TASKS[@]}"; do
         --run_name "${TASK}" \
         --task_name "$TASK" \
         --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/phenotype_query_contrastive_learning" \
-        --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/task_query_llm_embeddings.pt" \
+        --query_encoder llm \
+        --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/ehrshot_task_query_llm_embeddings.pt" \
         --query_llm_model_path "/data/model_weights_public/BlueZeros/EHR-R1-1.7B" \
         --max_table_len 8192 \
         --per_device_train_batch_size 8 \

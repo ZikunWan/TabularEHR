@@ -19,11 +19,6 @@ if PROJECT_ROOT not in sys.path:
 from dataset.ehrshot.task_info import get_task_info
 
 ADDITIONAL_INFO = {
-    "Body weight": {
-        "unit": "oz",
-        "ref_low": "350",
-        "ref_high": "1000"
-    },
     "Body height": {
         "unit": "inch",
         "ref_low": "5",
@@ -54,11 +49,6 @@ ADDITIONAL_INFO = {
         "ref_low": "60",
         "ref_high": "90"
     },
-    "Body temperature": {
-        "unit": "F",
-        "ref_low": "95",
-        "ref_high": "100.4"
-    },
     "Respiratory rate": {
         "unit": "breaths/min",
         "ref_low": "12",
@@ -85,7 +75,7 @@ ADDITIONAL_INFO = {
         "ref_high": "5.9"
     },
     "Leukocytes": {
-        "unit": "10^6/uL",
+        "unit": "k/uL",
         "ref_low": "4",
         "ref_high": "10"
     },
@@ -115,12 +105,12 @@ ADDITIONAL_INFO = {
         "ref_high": "28"
     },
     "Calcium": {
-        "unit": "mmol/L",
+        "unit": "mg/dL",
         "ref_low": "9",
         "ref_high": "10.5"
     },
     "Glucose": {
-        "unit": "mmol/L",
+        "unit": "mg/dL",
         "ref_low": "70",
         "ref_high": "100"
     },
@@ -500,22 +490,21 @@ class EHRSHOTDataset(Dataset):
 
             code = item.get('code', None)
             item_name = AGGREGATED_MAPPING.get(code, None)
-            if item_name is None:
-                item_name = self.code_2_description.get(code, None)
+            if item_name is None or item_name not in ADDITIONAL_INFO:
+                item_name = item_name or self.code_2_description.get(code, None)
                 if item_name is None:
                     continue
-                else:
-                    value = item.get('value', None)
-                    if not isinstance(value, str):
-                        continue
-                    
-                    unit = item.get('unit', None)
-                    row = [item_name, str(value), str(unit), "nan", "nan", "nan"]
-                    event_str_list.append(
-                        f"""| {" | ".join(row)} |"""
-                    )
-                    event_list.append(item_name)
+                value = item.get('value', None)
+                if not isinstance(value, str):
                     continue
+
+                unit = item.get('unit', None)
+                row = [item_name, str(value), str(unit), "nan", "nan", "nan"]
+                event_str_list.append(
+                    f"""| {" | ".join(row)} |"""
+                )
+                event_list.append(item_name)
+                continue
 
             value = item.get('value', None)
             if not isinstance(value, str):

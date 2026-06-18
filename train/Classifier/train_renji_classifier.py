@@ -12,7 +12,7 @@ from peft import LoraConfig, get_peft_model, PeftModel
 import glob
 from sklearn.metrics import roc_auc_score
 from torch.utils.data import Subset
-from transformers import Trainer, TrainingArguments, HfArgumentParser, set_seed
+from transformers import EarlyStoppingCallback, Trainer, TrainingArguments, HfArgumentParser, set_seed
 from transformers.utils import logging as hf_logging
 
 # Add project root to path
@@ -97,6 +97,10 @@ class DataArguments:
 class CustomTrainingArguments(TrainingArguments):
     wandb_project: Optional[str] = field(default="Renji")
     lr_scheduler_type: str = field(default="cosine")
+    early_stopping_patience: int = field(
+        default=0,
+        metadata={"help": "Number of evaluations without AUROC improvement before stopping. Set to 0 to disable."},
+    )
 
 
 def _build_patient_label_vectors(dataset):
@@ -310,6 +314,18 @@ def main():
         if training_args.process_index == 0:
             model.print_trainable_parameters()
 
+    callbacks = []
+    if monitor_dataset is not None and training_args.early_stopping_patience > 0:
+        callbacks.append(
+            EarlyStoppingCallback(
+                early_stopping_patience=training_args.early_stopping_patience,
+            )
+        )
+        rank0_print(
+            f"Early stopping enabled: patience={training_args.early_stopping_patience} "
+            f"evaluations, metric=eval_{training_args.metric_for_best_model}"
+        )
+
     trainer = Trainer(
         model=model, args=training_args,
         train_dataset=train_dataset,
@@ -322,6 +338,7 @@ def main():
             query_embeddings_by_text=query_embeddings_by_text,
         ),
         compute_metrics=compute_renji_metrics if monitor_dataset is not None else None,
+        callbacks=callbacks if callbacks else None,
     )
 
     resume_ckpt = None
