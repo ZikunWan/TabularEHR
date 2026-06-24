@@ -34,6 +34,30 @@ TASK_INFO = {
         "instruction": "Given the sequence of ICU events, predict whether the patient's total ICU length of stay will exceed 7 days.",
     },
 
+    "Time_to_ICU_or_Hospital_Mortality": {
+        "metric": "survival",
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of ICU events observed in the first 12 hours of the ICU stay, estimate the time to ICU or in-hospital mortality.",
+    },
+
+    "Time_to_Long_Term_Mortality": {
+        "metric": "survival",
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of ICU events observed in the first 12 hours of the ICU stay, estimate the time to mortality within the long-term follow-up window.",
+    },
+
+    "Time_to_ICU_Discharge": {
+        "metric": "survival",
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of ICU events, estimate the time to ICU discharge.",
+    },
+
+    "Time_to_ICU_Readmission": {
+        "metric": "survival",
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of ICU events, estimate the time to ICU readmission after discharge from the current stay.",
+    },
+
     "final_acuity": {
         "metric": "accuracy",
         "task_type": "multi_class_classification",

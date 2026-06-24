@@ -1,8 +1,6 @@
 #!/bin/bash
 set -e
 export MIMIC_SKIP_SAMPLE_CACHE_CHECK=1
-cd "$(dirname "$0")/../../test/Classifier"
-
 NUM_GPUS=$(nvidia-smi -L | wc -l)
 
 TASKS=(
@@ -31,13 +29,13 @@ for task_idx in "${!TASKS[@]}"; do
     gpu_id=$((task_idx % NUM_GPUS))
 
     echo "Evaluating ${task_name} on GPU ${gpu_id}"
-    CUDA_VISIBLE_DEVICES="$gpu_id" python test_ehr_bench_classifier.py \
+    CUDA_VISIBLE_DEVICES="$gpu_id" python test/classification/test_ehr_bench_classifier.py \
         --data_dir /data/zikun_workspace/mimic-iv-3.1_tabular \
         --sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/test/${task_name}.csv" \
         --embedding_cache /data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings_stage2.pt \
         --checkpoint_dir "/data/zikun_workspace/checkpoints/ehr_bench/${task_name}/table_encoder/after_phenotype_query_contrastive_learning" \
         --task_name "$task_name" \
-        --type_vocab_file /data/zikun_workspace/code/data/type_vocab.json \
+        --type_vocab_file data/type_vocab.json \
         --query_encoder llm \
         --query_embedding_cache /data/zikun_workspace/.cache/embeddings/query_classifier/ehr_bench_task_query_llm_embeddings.pt \
         --query_llm_model_path /data/model_weights_public/BlueZeros/EHR-R1-1.7B \

@@ -40,7 +40,7 @@ from dataset.ehrshot.ehrshot_dataset import EHRSHOTDataset
 from dataset.eicu.eicu_dataset import EICUDataset
 from dataset.mimic.mimic_dataset import MIMICIV
 from models.TableEncoder.config import LongTableEncoder1DConfig
-from models.TableEncoder.next_token_decoder import NextTokenPredictionModel
+from models.next_token_decoder import NextTokenPredictionModel
 from utils.collate import build_table_token_tensors
 from utils.load_embedding import build_text_to_idx
 
@@ -50,10 +50,12 @@ LOSS_COMPONENT_NAMES = (
     "item_loss",
     "unit_loss",
     "value_loss",
+    "time_loss",
     "weighted_category_loss",
     "weighted_item_loss",
     "weighted_unit_loss",
     "weighted_value_loss",
+    "weighted_time_loss",
 )
 
 
@@ -181,7 +183,6 @@ def build_one_dataset(dataset_name: str, root_dir: str, processed_dir: Optional[
             sample_info_path=sample_info_path,
             lazy_mode=True,
             shuffle=shuffle,
-            table_mode="table_only",
             max_samples=None,
             use_table_length_cache=False,
         )
@@ -193,7 +194,6 @@ def build_one_dataset(dataset_name: str, root_dir: str, processed_dir: Optional[
             task_name=None,
             lazy_mode=True,
             shuffle=shuffle,
-            table_mode="table_only",
         )
     if dataset_name == "ehrshot":
         return EHRSHOTDataset(
@@ -201,7 +201,6 @@ def build_one_dataset(dataset_name: str, root_dir: str, processed_dir: Optional[
             sample_info_path=sample_info_path,
             task_name=None,
             lazy_mode=True,
-            table_mode="table_only",
         )
     raise ValueError(f"Unsupported dataset: {dataset_name}")
 

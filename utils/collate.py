@@ -355,6 +355,38 @@ def create_survival_query_collate_fn(
     if type_vocab is None:
         type_vocab = {}
 
+    def build_survival_label(target):
+        if target is None:
+            return None
+        time_to_event = float(target["time_to_event"])
+        event_observed = bool(target["event_observed"])
+        num_bins = int(target["num_bins"])
+        max_bins = int(target.get("max_bins", num_bins))
+        stage_end_horizon = float(target["stage_end_horizon"])
+        stage_id = int(target["stage_id"])
+
+        observed_time = min(time_to_event, float(num_bins))
+        exposure = torch.zeros(max_bins, dtype=torch.float32)
+        event_bins = torch.zeros(max_bins, dtype=torch.float32)
+        stage_mask = torch.zeros(max_bins, dtype=torch.float32)
+        metadata = torch.zeros(max_bins, dtype=torch.float32)
+        stage_mask[:num_bins] = 1.0
+
+        full_bins = min(int(observed_time // 1), num_bins)
+        if full_bins:
+            exposure[:full_bins] = 1.0
+        if full_bins < num_bins:
+            exposure[full_bins] = float(observed_time - full_bins)
+
+        if event_observed and 0.0 < observed_time <= num_bins:
+            event_bin = min(int(torch.ceil(torch.tensor(observed_time)).item()) - 1, num_bins - 1)
+            event_bins[event_bin] = 1.0
+
+        metadata[0] = stage_end_horizon
+        if max_bins > 1:
+            metadata[1] = float(stage_id)
+        return torch.stack([exposure, event_bins, stage_mask, metadata])
+
     def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         batch = [
             sample
@@ -388,7 +420,13 @@ def create_survival_query_collate_fn(
             [sample["stage_id"] for sample in batch],
             dtype=torch.long,
         )
-        tensors["labels"] = torch.stack([sample["output"] for sample in batch])
+        labels = []
+        for sample in batch:
+            if "output" in sample:
+                labels.append(sample["output"])
+            else:
+                labels.append(build_survival_label(sample["survival_target"]))
+        tensors["labels"] = torch.stack(labels)
         return tensors
 
     return collate_fn

@@ -54,7 +54,6 @@ def init_harvest_worker(root_dir, split):
     _HARVEST_DATASET = RenjiDataset(
         root_dir=root_dir,
         split=split,
-        table_mode="table_only",
         shuffle=False,
     )
 
@@ -108,7 +107,6 @@ def harvest_unique_texts(root_dir, splits, harvest_checkpoint, num_workers, num_
         dataset = RenjiDataset(
             root_dir=root_dir,
             split=split,
-            table_mode="table_only",
             shuffle=False,
         )
 

@@ -8,3 +8,6 @@ __pycache__/
 *.so
 data
 .DS_Store
+outdated
+ds_config_zero2.json
+ds_config_zero3.json

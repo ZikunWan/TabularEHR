@@ -1,8 +1,6 @@
 #!/bin/bash
 set -e
 
-cd "$(dirname "$0")/../../test/Classifier"
-
 NUM_GPUS=$(nvidia-smi -L | wc -l)
 
 TASKS=(
@@ -27,13 +25,13 @@ for task_idx in "${!TASKS[@]}"; do
     gpu_id=$((task_idx % NUM_GPUS))
 
     echo "Evaluating ${task_name} on GPU ${gpu_id}"
-    CUDA_VISIBLE_DEVICES="$gpu_id" python test_ehrshot_classifier.py \
+    CUDA_VISIBLE_DEVICES="$gpu_id" python test/classification/test_ehrshot_classifier.py \
         --data_dir /data/EHR_data_public/EHRSHOT \
         --split_info_path /data/EHR_data_public/EHRSHOT/index/ehrshot_test.csv \
         --embedding_cache /data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings_stage2.pt \
         --checkpoint_dir "/data/zikun_workspace/checkpoints/ehrshot/${task_name}/after_phenotype_query_contrastive_learning" \
         --task_name "$task_name" \
-        --type_vocab_file /data/zikun_workspace/code/data/type_vocab.json \
+        --type_vocab_file data/type_vocab.json \
         --query_encoder llm \
         --query_embedding_cache /data/zikun_workspace/.cache/embeddings/query_classifier/ehrshot_task_query_llm_embeddings.pt \
         --query_llm_model_path /data/model_weights_public/BlueZeros/EHR-R1-1.7B \

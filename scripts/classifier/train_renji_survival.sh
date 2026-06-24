@@ -2,13 +2,11 @@
 set -e
 
 NUM_GPUS=$(nvidia-smi -L | wc -l)
-cd "$(dirname "$0")/../../train/Classifier"
-
-deepspeed --num_gpus="$NUM_GPUS" train_renji_survival.py \
-    --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
+deepspeed --num_gpus="$NUM_GPUS" train/tte/train_renji_survival.py \
+    --deepspeed "ds_config_zero2.json" \
     --output_dir "/data/zikun_workspace/checkpoints/renji/tacrolimus_survival" \
     --run_name "renji_tacrolimus_abnormal_survival" \
-    --patient_subset_path "/data/zikun_workspace/code/data/patients.json" \
+    --patient_subset_path "data/patients.json" \
     --max_table_len 4096 \
     --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 64 \

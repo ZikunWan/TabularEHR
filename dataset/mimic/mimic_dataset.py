@@ -91,32 +91,6 @@ MIMIC_TYPE_MAP = {
     "icustays": "visit_detail",
 }
 
-# Explicit code mapping for MEDS export (primarily ED-focused + static/service codes).
-# This is applied in `meds_input_process` before writing `code`.
-EXPLICIT_MEDS_CODE_MAP = {
-    "triage": {
-        "temperature": "TEMPERATURE",
-        "heartrate": "HEART_RATE",
-        "resprate": "RESPIRATORY_RATE",
-        "o2sat": "O2_SATURATION",
-        "sbp": "BLOOD_PRESSURE_SYSTOLIC",
-        "dbp": "BLOOD_PRESSURE_DIASTOLIC",
-        "pain": "PAIN",
-        "acuity": "ACUITY",
-    },
-    "vitalsign": {
-        "temperature": "TEMPERATURE",
-        "heartrate": "HEART_RATE",
-        "resprate": "RESPIRATORY_RATE",
-        "o2sat": "O2_SATURATION",
-        "sbp": "BLOOD_PRESSURE_SYSTOLIC",
-        "dbp": "BLOOD_PRESSURE_DIASTOLIC",
-        "pain": "PAIN",
-        "rhythm": "RHYTHM",
-    },
-}
-
-
 def _table_length_cache_key_from_sample(sample_info):
     return (
         f"{sample_info.get('subject_id', '')}|"
@@ -179,8 +153,6 @@ def _init_sample_cache_worker(
     ehr_dir,
     task_schema,
     sample_info,
-    table_mode,
-    return_meds,
     sample_cache_dir,
     similar_item_dir,
     itemid_representation,
@@ -196,8 +168,6 @@ def _init_sample_cache_worker(
     )
     worker_dataset.task_schema = task_schema
     worker_dataset.sample_info = sample_info
-    worker_dataset.table_mode = table_mode
-    worker_dataset.return_meds = bool(return_meds)
     worker_dataset.ehr_dir = ehr_dir
     worker_dataset.sample_cache_dir = sample_cache_dir
     worker_dataset.similar_item_dir = similar_item_dir
@@ -222,11 +192,9 @@ class MIMICIV(Dataset):
         sample_info_path=None,
         lazy_mode=False,
         shuffle=True,
-        table_mode="text_only",
         max_samples=None,
         itemid_representation="description",
         concept_map_dir=None,
-        return_meds=False,
         use_table_length_cache=True,
     ):
         random.seed(42)
@@ -247,9 +215,6 @@ class MIMICIV(Dataset):
 
         self.sample_info_path = sample_info_path
         self.lazy_mode = lazy_mode
-        if table_mode not in {"text_only", "table_only", "table_plus_rest_text"}:
-            raise ValueError(f"Unsupported table_mode: {table_mode}")
-        self.table_mode = table_mode
         if itemid_representation not in {"description", "code"}:
             raise ValueError(
                 f"Unsupported itemid_representation={itemid_representation}. "
@@ -257,7 +222,6 @@ class MIMICIV(Dataset):
             )
         self.itemid_representation = itemid_representation
         self.concept_map_dir = concept_map_dir
-        self.return_meds = return_meds
         self.use_table_length_cache = use_table_length_cache
         self.task_schema = get_task_info()
         self.local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
@@ -307,10 +271,9 @@ class MIMICIV(Dataset):
             self.table_length_cache_dir,
             f"{cache_prefix}.json",
         )
-        mode_tag = self.table_mode
         self.sample_cache_dir = os.path.join(
             self.sample_cache_root_dir,
-            f"{cache_prefix}_{mode_tag}",
+            cache_prefix,
         )
         os.makedirs(self.sample_cache_dir, exist_ok=True)
 
@@ -522,8 +485,6 @@ class MIMICIV(Dataset):
                 self.ehr_dir,
                 self.task_schema,
                 self.sample_info,
-                self.table_mode,
-                self.return_meds,
                 self.sample_cache_dir,
                 self.similar_item_dir,
                 self.itemid_representation,
@@ -559,87 +520,14 @@ class MIMICIV(Dataset):
             and item["file_name"] not in {"admissions", "patients"}
         ]
 
-        # add last discharge note (medical history)
-        last_discharge_note = ""
-        if self.table_mode != "table_only" and safe_read(sample_info.get("last_discharge_id", None)):
-            last_discharge_id = int(sample_info["last_discharge_id"])
-            last_discharge_note = self.convertor.input_process(patient_trajectory_list[last_discharge_id])
-
-        # add admissions information
-        admission_text = ""
-        if self.table_mode != "table_only" and safe_read(sample_info.get("admissions_id", None)) and task_name != "admissions":
-            admissions_id = int(sample_info["admissions_id"])
-            admission_text = self.convertor.input_process(patient_trajectory_list[admissions_id])
-
-        # add patient information
-        patient_text = ""
-        if self.table_mode != "table_only":
-            patient_text = self.convertor.input_process(patient_trajectory_list[0])
-
-        measurement_table = pd.DataFrame(columns=['Time', 'Item', 'Value', 'Unit', 'Category'])
-
-        if self.table_mode in {"table_only", "table_plus_rest_text"}:
-            structured_text_events = [
-                item for item in trajectory_events
-                if item.get("file_name") not in {"discharge", "radiology"}
-            ]
-            if self.table_mode == "table_only":
-                input_text = ""
-                all_text_blocks = []
-                measurement_table_row_block_ids = []
-                measurement_table = self.structed_EHR_input_process(
-                    structured_text_events,
-                    patient_trajectory_list,
-                )
-            else:
-                # Structured-EHR text excludes note content, including prior discharge note.
-                prefix_blocks = []
-                if isinstance(patient_text, str) and patient_text.strip():
-                    prefix_blocks.append(
-                        {
-                            "block_id": "prefix_patient",
-                            "block_type": "prefix",
-                            "file_name": "patients",
-                            "text": patient_text,
-                        }
-                    )
-                if isinstance(admission_text, str) and admission_text.strip():
-                    prefix_blocks.append(
-                        {
-                            "block_id": "prefix_admission",
-                            "block_type": "prefix",
-                            "file_name": "admissions",
-                            "text": admission_text,
-                        }
-                    )
-
-                event_block_ids = [f"event_{i}" for i in range(len(structured_text_events))]
-                event_blocks = []
-                for block_id, item in zip(event_block_ids, structured_text_events):
-                    event_text = self.convertor.input_process(item)
-                    if isinstance(event_text, str) and event_text.strip():
-                        event_blocks.append(
-                            {
-                                "block_id": block_id,
-                                "block_type": "event",
-                                "file_name": item.get("file_name", ""),
-                                "starttime": item.get("starttime", ""),
-                                "text": event_text,
-                            }
-                        )
-
-                all_text_blocks = prefix_blocks + event_blocks
-                input_text = "\n\n".join([b["text"] for b in all_text_blocks if isinstance(b.get("text"), str) and b["text"].strip()])
-                measurement_table, measurement_table_row_block_ids = self.structed_EHR_input_process(
-                    structured_text_events,
-                    patient_trajectory_list,
-                    event_block_ids=event_block_ids,
-                    patient_block_id="prefix_patient",
-                    return_block_ids=True,
-                )
-        else:
-            prefix_text_list = [patient_text, last_discharge_note, admission_text]
-            input_text = self.free_text_input_process(trajectory_events, prefix_text_list)
+        structured_events = [
+            item for item in trajectory_events
+            if item.get("file_name") not in {"discharge", "radiology"}
+        ]
+        measurement_table = self.structed_EHR_input_process(
+            structured_events,
+            patient_trajectory_list,
+        )
 
         instruction = self.task_schema[task_name]["instruction"]
         output = sample_info["target"]  # List or str
@@ -647,52 +535,14 @@ class MIMICIV(Dataset):
 
         sample = {
             "idx": idx,
-            "input": input_text,
+            "input": "",
             "candidates": candidates,
             "task_info": self.task_schema[task_name],
             "output": "\n".join(output) if isinstance(output, list) else str(output),
             "instruction": instruction,
+            "measurement_table": measurement_table,
         }
 
-        if getattr(self, "return_meds", False):
-            meds_df, meds_events, hf_ehr_events = self.meds_input_process(sample_info, return_hf_ehr_events=True)
-            sample["meds_table"] = meds_df
-            sample["meds_events"] = meds_events
-            if hf_ehr_events is not None:
-                sample["hf_ehr_events"] = hf_ehr_events
-
-        if self.table_mode in {"table_only", "table_plus_rest_text"}:
-            sample["measurement_table"] = measurement_table
-            sample["structured_text_blocks"] = all_text_blocks
-            sample["measurement_table_row_block_ids"] = measurement_table_row_block_ids
-            if self.table_mode == "table_plus_rest_text":
-                used_block_ids = {block_id for block_id in measurement_table_row_block_ids if block_id}
-                remaining_parts = []
-
-                if isinstance(last_discharge_note, str) and last_discharge_note.strip():
-                    remaining_parts.append(last_discharge_note)
-
-                for item in trajectory_events:
-                    if item.get("file_name") in {"discharge", "radiology"}:
-                        event_text = self.convertor.input_process(item)
-                        if isinstance(event_text, str) and event_text.strip():
-                            remaining_parts.append(event_text)
-
-                for block in all_text_blocks:
-                    block_id = str(block.get("block_id", "")).strip()
-                    block_text = block.get("text", "")
-                    if not isinstance(block_text, str) or not block_text.strip():
-                        continue
-                    if not block_id or block_id not in used_block_ids:
-                        remaining_parts.append(block_text)
-
-                deduped_parts = []
-                seen = set()
-                for part in remaining_parts:
-                    if part not in seen:
-                        deduped_parts.append(part)
-                        seen.add(part)
-                sample["remaining_text"] = "\n\n".join(deduped_parts)
         return sample
 
     def __getitem__(self, idx):
@@ -706,30 +556,7 @@ class MIMICIV(Dataset):
                 if self.local_rank in (-1, 0):
                     self._save_sample_to_cache(sample_info, sample)
 
-        if getattr(self, "return_meds", False) and "meds_events" not in sample:
-            sample_info = self.sample_info[idx]
-            meds_df, meds_events, hf_ehr_events = self.meds_input_process(sample_info, return_hf_ehr_events=True)
-            sample["meds_table"] = meds_df
-            sample["meds_events"] = meds_events
-            if hf_ehr_events is not None:
-                sample["hf_ehr_events"] = hf_ehr_events
-            if self.lazy_mode and self.local_rank in (-1, 0):
-                self._save_sample_to_cache(sample_info, sample)
-
         return sample
-
-    def free_text_input_process(self, trajectory_events, prefix_text_list):
-        text_events = []
-        for item in trajectory_events:
-            event_text = self.convertor.input_process(item)
-            if isinstance(event_text, str) and event_text.strip():
-                text_events.append(event_text)
-
-        context_input_text_list = [
-            s for s in (prefix_text_list + text_events)
-            if isinstance(s, str) and s.strip()
-        ]
-        return "\n\n".join(context_input_text_list)
 
     def structed_EHR_input_process(
         self,
@@ -832,168 +659,6 @@ class MIMICIV(Dataset):
             return measurement_tables, row_block_ids
         return measurement_tables
 
-    def meds_input_process(self, sample_info, return_hf_ehr_events=False):
-        """Build MEDS-style rows/events directly from source trajectory events."""
-        subject_id = str(sample_info["subject_id"])
-        patient_trajectory_list = read_parquet(f"{self.ehr_dir}/{subject_id}.parquet")
-
-        context_begin = int(sample_info["context_begin"])
-        context_end = int(sample_info["context_end"])
-        task_name = sample_info["task"]
-
-        trajectory_events = [
-            item for item in patient_trajectory_list[context_begin:context_end]
-            if item["file_name"] not in self.task_schema[task_name]["bid_event"]
-            and item["file_name"] not in {"admissions", "patients"}
-        ]
-        structured_events = [
-            item for item in trajectory_events
-            if item.get("file_name") not in {"discharge", "radiology"}
-        ]
-
-        rows = []
-
-        def _normalize_code_fragment(x):
-            s = "" if x is None else str(x).strip().upper()
-            s = re.sub(r"[^A-Z0-9]+", "_", s).strip("_")
-            return s or "UNKNOWN"
-
-        def _resolve_explicit_code(file_name, feature_name, value_raw):
-            key = re.sub(r"[^a-z0-9]+", "", str(feature_name).lower())
-
-            # 1) ED vitals explicit mappings.
-            if file_name in EXPLICIT_MEDS_CODE_MAP and key in EXPLICIT_MEDS_CODE_MAP[file_name]:
-                return EXPLICIT_MEDS_CODE_MAP[file_name][key], value_raw
-
-            # 2) ED / medication-like events.
-            if file_name == "pyxis":
-                return f"MEDICATION//{_normalize_code_fragment(feature_name)}//ADMINISTERED", value_raw
-            if file_name == "medrecon":
-                return f"MEDICATION_RECON//{_normalize_code_fragment(feature_name)}", value_raw
-            if file_name == "emar":
-                return f"MEDICATION//{_normalize_code_fragment(feature_name)}//ADMINISTERED", value_raw
-
-            # 3) Service transitions.
-            if file_name == "services":
-                return f"SERVICE//{_normalize_code_fragment(feature_name)}", value_raw
-
-            # 4) Static patient attributes.
-            if file_name == "patients":
-                if key == "age":
-                    return "AGE", value_raw
-                if key == "gender":
-                    v = "" if value_raw is None else str(value_raw).strip()
-                    g = {"m": "MALE", "male": "MALE", "f": "FEMALE", "female": "FEMALE"}.get(
-                        v.lower(),
-                        _normalize_code_fragment(v),
-                    )
-                    # Match MEDS style: gender encoded in code itself.
-                    return f"GENDER//{g}", ""
-                if key == "race":
-                    v = "" if value_raw is None else str(value_raw).strip()
-                    return f"RACE//{_normalize_code_fragment(v)}", ""
-
-            return str(feature_name).strip(), value_raw
-
-        def append_event_rows(event_item, fallback_category=None):
-            file_name = event_item.get("file_name", "")
-            if file_name in EXCLUDED_TABLE_KEYS or file_name not in TABULAR_KEYS:
-                return
-            event_rows = self._process_tabular_event(event_item)
-            if not event_rows:
-                return
-
-            category = fallback_category or MIMIC_TYPE_MAP.get(file_name, "observation")
-            for r in event_rows:
-                feature_name = str(r.get("feature", "")).strip()
-                value_raw = r.get("value", "")
-                code, value_raw = _resolve_explicit_code(file_name, feature_name, value_raw)
-                if not code:
-                    continue
-                time_val = r.get("time", "")
-                unit_raw = r.get("unit", "")
-                unit = "" if unit_raw is None else str(unit_raw).strip()
-
-                numeric_value = pd.to_numeric(value_raw, errors="coerce")
-                if pd.notna(numeric_value):
-                    numeric_out = float(numeric_value)
-                    text_out = ""
-                else:
-                    numeric_out = None
-                    text_out = "" if value_raw is None else str(value_raw).strip()
-
-                rows.append(
-                    {
-                        "subject_id": subject_id,
-                        "time": time_val,
-                        "code": code,
-                        "numeric_value": numeric_out,
-                        "text_value": text_out,
-                        "unit": unit,
-                        "omop_table": category,
-                    }
-                )
-
-        for event_item in structured_events:
-            append_event_rows(event_item)
-
-        if patient_trajectory_list and patient_trajectory_list[0].get("file_name") == "patients":
-            append_event_rows(patient_trajectory_list[0], fallback_category="person")
-
-        meds_df = pd.DataFrame(
-            rows,
-            columns=["subject_id", "time", "code", "numeric_value", "text_value", "unit", "omop_table"],
-        )
-        if not meds_df.empty:
-            meds_df["time"] = pd.to_datetime(meds_df["time"], format="mixed", errors="coerce")
-            meds_df = meds_df.sort_values(by=["time"]).reset_index(drop=True)
-            meds_df["time"] = meds_df["time"].dt.strftime("%Y-%m-%d %H:%M:%S").fillna("")
-
-        meds_events = []
-        for row in meds_df.to_dict(orient="records"):
-            code = str(row.get("code", "")).strip()
-            if not code:
-                continue
-
-            event = {"code": code}
-            t = str(row.get("time", "")).strip()
-            if t:
-                event["start"] = t
-                event["end"] = t
-
-            num_val = row.get("numeric_value")
-            txt_val = str(row.get("text_value", "")).strip()
-            if pd.notna(num_val):
-                event["value"] = float(num_val)
-            elif txt_val:
-                event["value"] = txt_val
-
-            unit = str(row.get("unit", "")).strip()
-            if unit:
-                event["unit"] = unit
-
-            omop_table = str(row.get("omop_table", "")).strip()
-            if omop_table:
-                event["omop_table"] = omop_table
-
-            meds_events.append(event)
-
-        if not return_hf_ehr_events:
-            return meds_df, meds_events
-
-        from hf_ehr.config import Event
-
-        hf_ehr_events = []
-        for event in meds_events:
-            kwargs = {"code": event["code"]}
-            for key in ("value", "unit", "start", "end", "omop_table"):
-                if key in event and event[key] not in (None, ""):
-                    kwargs[key] = event[key]
-            hf_ehr_events.append(Event(**kwargs))
-
-        return meds_df, meds_events, hf_ehr_events
-
-    
     def _process_tabular_event(self, item):
         """
         Extract tabular data from event item.
@@ -1233,131 +898,3 @@ class MIMICIV(Dataset):
 
     def __len__(self):
         return len(self.sample_info)
-
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="MIMIC-IV dataset template usage example.")
-    parser.add_argument("--root_dir", type=str, default="/data/zikun_workspace/mimic-iv-3.1_tabular")
-    parser.add_argument("--sample_info_path", type=str, default="/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/test/ED_Hospitalization.csv")
-    parser.add_argument("--max_samples", type=int, default=64)
-    parser.add_argument("--sample_index", type=int, default=63)
-    parser.add_argument("--lazy_mode", action="store_true")
-    parser.add_argument(
-        "--itemid_representation",
-        type=str,
-        default="code",
-        choices=["description", "code"],
-        help="How to represent itemid-derived fields (item_name): description or standardized code.",
-    )
-    parser.add_argument(
-        "--concept_map_dir",
-        type=str,
-        default="/data/EHR_data_public/mimic-iv-3.1-meds/pre_MEDS",
-        help="Directory containing concept-map csv files (e.g. pre_MEDS) used when itemid_representation=code.",
-    )
-    parser.add_argument(
-        "--out_dir",
-        type=str,
-        default=os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "data",
-            "mimic",
-        ),
-    )
-    args = parser.parse_args()
-
-    os.makedirs(args.out_dir, exist_ok=True)
-
-    dataset_text = MIMICIV(
-        root_dir=args.root_dir,
-        sample_info_path=args.sample_info_path,
-        lazy_mode=args.lazy_mode,
-        table_mode="text_only",
-        max_samples=args.max_samples,
-        shuffle=False,
-        itemid_representation=args.itemid_representation,
-        concept_map_dir=args.concept_map_dir,
-    )
-    dataset_struct = MIMICIV(
-        root_dir=args.root_dir,
-        sample_info_path=args.sample_info_path,
-        lazy_mode=args.lazy_mode,
-        table_mode="table_only",
-        max_samples=args.max_samples,
-        shuffle=False,
-        itemid_representation=args.itemid_representation,
-        concept_map_dir=args.concept_map_dir,
-    )
-    dataset_mixed = MIMICIV(
-        root_dir=args.root_dir,
-        sample_info_path=args.sample_info_path,
-        lazy_mode=args.lazy_mode,
-        table_mode="table_plus_rest_text",
-        max_samples=args.max_samples,
-        shuffle=False,
-        itemid_representation=args.itemid_representation,
-        concept_map_dir=args.concept_map_dir,
-    )
-
-    print(f"dataset_text size: {len(dataset_text)}")
-    print(f"dataset_struct size: {len(dataset_struct)}")
-    print(f"dataset_mixed size: {len(dataset_mixed)}")
-    if len(dataset_text) == 0:
-        raise SystemExit("No samples found.")
-
-    idx = max(0, min(args.sample_index, len(dataset_text) - 1))
-    sample_text = dataset_text[idx]
-    sample_struct = dataset_struct[idx]
-    sample_mixed = dataset_mixed[idx]
-
-    print(f"\nSample index: {idx}")
-    print(f"text keys: {list(sample_text.keys())}")
-    print(f"struct keys: {list(sample_struct.keys())}")
-    print(f"mixed keys: {list(sample_mixed.keys())}")
-
-    text_out = os.path.join(args.out_dir, "mimic_text_only_sample.txt")
-    with open(text_out, "w", encoding="utf-8") as f:
-        f.write(str(sample_text.get("input", "")) + "\n")
-    print(f"Saved text sample: {text_out}")
-
-    struct_text_out = os.path.join(args.out_dir, "mimic_table_only_text_sample.txt")
-    with open(struct_text_out, "w", encoding="utf-8") as f:
-        f.write(str(sample_struct.get("input", "")) + "\n")
-    print(f"Saved structured-text sample: {struct_text_out}")
-
-    mixed_text_out = os.path.join(args.out_dir, "mimic_table_plus_rest_text_sample.txt")
-    with open(mixed_text_out, "w", encoding="utf-8") as f:
-        f.write(str(sample_mixed.get("remaining_text", "")) + "\n")
-    print(f"Saved mixed-text sample: {mixed_text_out}")
-
-    table = sample_struct.get("measurement_table")
-    if isinstance(table, pd.DataFrame) and not table.empty:
-        table_out = os.path.join(args.out_dir, "mimic_table_only_sample.csv")
-        table.to_csv(table_out, index=False, encoding="utf-8-sig")
-        print(f"Saved structured table sample: {table_out} (shape={table.shape})")
-
-        sample_info = dataset_struct.sample_info[idx]
-        subject_id = str(sample_info.get("subject_id", ""))
-        meds_df, meds_events = dataset_struct.meds_input_process(sample_info)
-
-        meds_csv_out = os.path.join(args.out_dir, "mimic_meds_sample.csv")
-        meds_df.to_csv(meds_csv_out, index=False, encoding="utf-8-sig")
-        print(f"Saved MEDS table sample: {meds_csv_out} (shape={meds_df.shape})")
-
-        meds_json_out = os.path.join(args.out_dir, "mimic_meds_sample.json")
-        with open(meds_json_out, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "subject_id": subject_id,
-                    "sample_index": idx,
-                    "events": meds_events,
-                },
-                f,
-                ensure_ascii=False,
-                indent=2,
-            )
-        print(f"Saved MEDS events sample: {meds_json_out} (events={len(meds_events)})")
-    else:
-        print("No measurement_table found in structured sample.")

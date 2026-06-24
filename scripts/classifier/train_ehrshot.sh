@@ -1,7 +1,5 @@
 #!/bin/bash
 NUM_GPUS=$(nvidia-smi -L | wc -l)
-cd train/Classifier
-
 TASKS=(
     "guo_los"
     "guo_readmission"
@@ -24,8 +22,8 @@ for TASK in "${TASKS[@]}"; do
     echo "Training Task: $TASK"
     echo "==================================="
     
-    deepspeed --num_gpus=$NUM_GPUS train_ehrshot_classifier.py \
-        --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
+    deepspeed --num_gpus=$NUM_GPUS train/classification/train_ehrshot_classifier.py \
+        --deepspeed "ds_config_zero2.json" \
         --output_dir "/data/zikun_workspace/checkpoints/ehrshot/${TASK}/after_phenotype_query_contrastive_learning" \
         --run_name "${TASK}" \
         --task_name "$TASK" \

@@ -19,6 +19,26 @@ TASK_INFO = {
         "task_type": "binary_classification",
         "instruction": "Given the sequence of events that have occurred in a hospital, please predict whether a patient will be transferred to the ICU during a visit to the hospital.",
     },
+    "Time_to_Hospital_Discharge": {
+        "metric": "survival",
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of events that have occurred in a hospital, estimate the time to hospital discharge.",
+    },
+    "Time_to_Hospital_Readmission": {
+        "metric": "survival",
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of events that have occurred in a hospital, estimate the time to hospital readmission after discharge.",
+    },
+    "Time_to_ICU_Transfer": {
+        "metric": "survival",
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of events that have occurred in a hospital, estimate the time to ICU transfer during the visit.",
+    },
+    "Time_to_Mortality": {
+        "metric": "survival",
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of events that have occurred for a patient, estimate the time to mortality.",
+    },
     "lab_anemia": {
         "metric": "auroc",
         "task_type": "multi_class_classification",

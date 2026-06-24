@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import math
 from copy import deepcopy
 import pandas as pd
 import numpy as np
@@ -112,11 +113,9 @@ class RenjiDataset(Dataset):
                  root_dir, 
                  split='train', 
                  max_samples=None,
-                 table_mode='table_only',
                  target_metrics=None,
                  target_prediction_points=None,
                  shuffle=False,
-                 return_meds=False,
                  ):
         """
         Initialize RenjiDataset.
@@ -125,25 +124,19 @@ class RenjiDataset(Dataset):
             root_dir: Root directory containing the data
             split: Data split ('train', 'val', 'test')
             max_samples: Maximum number of samples to use
-            table_mode: One of 'text_only', 'table_only', or 'table_plus_rest_text'
             target_metrics: List of metric names to filter (e.g., ['ALT', 'AST', 'TB'])
                           If None, use all metrics
             target_prediction_points: List of prediction point keys to filter
                           (e.g., ['day0', 'day30', 'day180', 'day365']). If None, use all.
             shuffle: Whether to shuffle the dataset
-            return_meds: Whether to include MEDS-format inputs.
         """
         self.root_dir = root_dir
         self.split = split
         self.max_samples = max_samples
-        if table_mode not in {'text_only', 'table_only', 'table_plus_rest_text'}:
-            raise ValueError(f"Invalid table_mode: {table_mode}")
-        self.table_mode = table_mode
         self.target_metrics = target_metrics
         self.target_prediction_points = target_prediction_points
         self.active_points = list(target_prediction_points) if target_prediction_points is not None else list(self.ALL_POINTS)
         self.shuffle = shuffle
-        self.return_meds = return_meds
         self.task_schema = get_task_info()
         
         self.followup_dir = os.path.join(self.root_dir, 'follow_ups')
@@ -261,20 +254,20 @@ class RenjiDataset(Dataset):
 
         # Medication metadata
         self.MED_META = {
-            'Tacrolimus_ER':      {'str': '24 HR tacrolimus 0.5 MG Extended Release Oral Capsule', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/1431971'},
-            'Tacrolimus_Saifukai':{'str': 'tacrolimus 0.5 MG Oral Capsule', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/313190'},
-            'Tacrolimus_Prograf': {'str': 'tacrolimus 0.5 MG Oral Capsule', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/313190'},
-            'Tacrolimus':         {'str': 'tacrolimus 0.5 MG Oral Capsule', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/313190'},
-            'Cyclosporine':       {'str': 'cycloSPORINE 25 MG Oral Capsule', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/197553'},
-            'Sandimmun':          {'str': 'cycloSPORINE 25 MG Oral Capsule', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/197553'},
-            'Rapamune':           {'str': 'sirolimus 1 MG Oral Tablet', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/349208'},
-            'Prednisone':         {'str': 'predniSONE 5 MG Oral Tablet', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/312617'},
-            'Methylprednisolone': {'str': 'methylPREDNISolone 4 MG Oral Tablet', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/259966'},
-            'Medrol':             {'str': 'methylPREDNISolone 4 MG Oral Tablet', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/259966'},
-            'Mifu':               {'str': 'mycophenolic acid 180 MG Delayed Release Oral Tablet', 'unit': 'mg', 'MEDS_CODE': 'RxNorm/485020'},
-            'MMF':                {'str': 'mycophenolate mofetil 250 MG Oral Capsule', 'unit': 'g', 'MEDS_CODE': 'RxNorm/199058'},
-            'CellCept':           {'str': 'mycophenolate mofetil 250 MG Oral Capsule', 'unit': 'g', 'MEDS_CODE': 'RxNorm/199058'},
-            'Saikeping':          {'str': 'mycophenolate mofetil 250 MG Oral Capsule', 'unit': 'g', 'MEDS_CODE': 'RxNorm/199058'},
+            'Tacrolimus_ER':      {'str': '24 HR tacrolimus 0.5 MG Extended Release Oral Capsule', 'unit': 'mg'},
+            'Tacrolimus_Saifukai':{'str': 'tacrolimus 0.5 MG Oral Capsule', 'unit': 'mg'},
+            'Tacrolimus_Prograf': {'str': 'tacrolimus 0.5 MG Oral Capsule', 'unit': 'mg'},
+            'Tacrolimus':         {'str': 'tacrolimus 0.5 MG Oral Capsule', 'unit': 'mg'},
+            'Cyclosporine':       {'str': 'cycloSPORINE 25 MG Oral Capsule', 'unit': 'mg'},
+            'Sandimmun':          {'str': 'cycloSPORINE 25 MG Oral Capsule', 'unit': 'mg'},
+            'Rapamune':           {'str': 'sirolimus 1 MG Oral Tablet', 'unit': 'mg'},
+            'Prednisone':         {'str': 'predniSONE 5 MG Oral Tablet', 'unit': 'mg'},
+            'Methylprednisolone': {'str': 'methylPREDNISolone 4 MG Oral Tablet', 'unit': 'mg'},
+            'Medrol':             {'str': 'methylPREDNISolone 4 MG Oral Tablet', 'unit': 'mg'},
+            'Mifu':               {'str': 'mycophenolic acid 180 MG Delayed Release Oral Tablet', 'unit': 'mg'},
+            'MMF':                {'str': 'mycophenolate mofetil 250 MG Oral Capsule', 'unit': 'g'},
+            'CellCept':           {'str': 'mycophenolate mofetil 250 MG Oral Capsule', 'unit': 'g'},
+            'Saikeping':          {'str': 'mycophenolate mofetil 250 MG Oral Capsule', 'unit': 'g'},
         }
 
         # Value mapping for static features
@@ -304,8 +297,7 @@ class RenjiDataset(Dataset):
                     (1, 2, None, 5.1, 14.1), (2, 6, None, 4.4, 11.9),
                     (6, 13, None, 4.3, 11.3), (13, 99, None, 4.1, 11.0)
                 ],
-                "LONIC": "Leukocytes [#/volume] in Blood by Automated count",
-                "MEDS_CODE": "LOINC/6690-2"
+                "LONIC": "Leukocytes [#/volume] in Blood by Automated count"
             },
             'N_Percent': {
                 'unit': '%',
@@ -314,8 +306,7 @@ class RenjiDataset(Dataset):
                     (1, 2, None, 13, 55), (2, 6, None, 22, 65),
                     (6, 13, None, 31, 70), (13, 99, None, 37, 77)
                 ],
-                "LONIC": "Neutrophils/Leukocytes in Blood by Automated count",
-                "MEDS_CODE": "LOINC/770-8"
+                "LONIC": "Neutrophils/Leukocytes in Blood by Automated count"
             },
             'Lymphocyte_Abs': {
                 'unit': '10^9/L',
@@ -324,13 +315,11 @@ class RenjiDataset(Dataset):
                     (1, 2, None, 2.4, 8.7), (2, 6, None, 1.8, 6.3),
                     (6, 13, None, 1.5, 4.6), (13, 99, None, 1.2, 3.8)
                 ],
-                "LONIC": "Lymphocytes [#/volume] in Blood by Automated count",
-                "MEDS_CODE": "LOINC/731-0"
+                "LONIC": "Lymphocytes [#/volume] in Blood by Automated count"
             },
             'Eosinophil_Percent': {'unit': '%',
                                    'ranges': [(0, 2, None, 0.0, 0.1), (2, 99, None, 0.0, 0.07)],
-                                   "LONIC": "Eosinophils/Leukocytes in Blood by Automated count",
-                                   "MEDS_CODE": "LOINC/713-8"},
+                                   "LONIC": "Eosinophils/Leukocytes in Blood by Automated count"},
             'HB': {
                 'unit': 'g/L',
                 'ranges': [
@@ -339,8 +328,7 @@ class RenjiDataset(Dataset):
                     (6, 13, None, 118, 156),
                     (13, 99, 'M', 129, 172), (13, 99, 'F', 114, 154)
                 ],
-                "LONIC": "Hemoglobin [Mass/volume] in Central venous blood by calculation",
-                "MEDS_CODE": "LOINC/97550-8"
+                "LONIC": "Hemoglobin [Mass/volume] in Central venous blood by calculation"
             },
             'PLT': {
                 'unit': '10^9/L',
@@ -349,8 +337,7 @@ class RenjiDataset(Dataset):
                     (1, 2, None, 190, 472), (2, 6, None, 188, 472),
                     (6, 13, None, 167, 453), (13, 99, None, 150, 407),
                 ],
-                "LONIC": "Platelets [#/volume] in Blood by Automated count",
-                "MEDS_CODE": "LOINC/777-3"
+                "LONIC": "Platelets [#/volume] in Blood by Automated count"
             },
             'TP': {
                 'unit': 'g/L',
@@ -359,8 +346,7 @@ class RenjiDataset(Dataset):
                     (1, 2, None, 58, 76), (2, 6, None, 61, 79),
                     (6, 13, None, 65, 84), (13, 99, None, 68, 88)
                 ],
-                "LONIC": "Protein [Mass/volume] in Serum or Plasma",
-                "MEDS_CODE": "LOINC/2885-2"
+                "LONIC": "Protein [Mass/volume] in Serum or Plasma"
             },
             'ALB': {
                 'unit': 'g/L',
@@ -368,8 +354,7 @@ class RenjiDataset(Dataset):
                     (0, 0.5, None, 35, 50), (0.5, 13, None, 39, 54),
                     (13, 99, None, 42, 56),
                 ],
-                "LONIC": "Albumin in serum - albumin in pleural fluid [Mass concentration difference]",
-                "MEDS_CODE": "LOINC/72647-1"
+                "LONIC": "Albumin in serum - albumin in pleural fluid [Mass concentration difference]"
             },
             'ALT': {
                 'unit': 'U/L',
@@ -378,8 +363,7 @@ class RenjiDataset(Dataset):
                     (2, 13, None, 7, 30),
                     (13, 99, 'M', 7, 43), (13, 99, 'F', 6, 29)
                 ],
-                "LONIC": "Alanine aminotransferase [Enzymatic activity/volume] in Serum or Plasma",
-                "MEDS_CODE": "LOINC/1742-6"
+                "LONIC": "Alanine aminotransferase [Enzymatic activity/volume] in Serum or Plasma"
             },
             'AST': {
                 'unit': 'U/L',
@@ -388,8 +372,7 @@ class RenjiDataset(Dataset):
                     (2, 13, None, 14, 44),
                     (13, 99, 'M', 12, 37), (13, 99, 'F', 10, 31)
                 ],
-                "LONIC": "Aspartate aminotransferase [Enzymatic activity/volume] in Serum or Plasma",
-                "MEDS_CODE": "LOINC/1920-8"
+                "LONIC": "Aspartate aminotransferase [Enzymatic activity/volume] in Serum or Plasma"
             },
             'ALP': {
                 'unit': 'U/L',
@@ -402,8 +385,7 @@ class RenjiDataset(Dataset):
                     (15, 17, 'M', 64, 443), (15, 17, 'F', 52, 215),
                     (17, 99, 'M', 51, 202), (17, 99, 'F', 43, 130),
                 ],
-                "LONIC": "Alkaline phosphatase [Enzymatic activity/volume] in Serum or Plasma",
-                "MEDS_CODE": "LOINC/6768-6"
+                "LONIC": "Alkaline phosphatase [Enzymatic activity/volume] in Serum or Plasma"
             },
             'GGT': {
                 'unit': 'U/L',
@@ -411,23 +393,19 @@ class RenjiDataset(Dataset):
                     (0, 0.5, None, 9, 150), (0.5, 1, None, 6, 31),
                     (1, 13, None, 5, 19), (13, 99, 'M', 8, 40), (13, 99, 'F', 6, 26)
                 ],
-                "LONIC": "Gamma glutamyl transferase [Enzymatic activity/volume] in Serum or Plasma",
-                "MEDS_CODE": "LOINC/2324-2"
+                "LONIC": "Gamma glutamyl transferase [Enzymatic activity/volume] in Serum or Plasma"
             },
             'DB': {'unit': 'μmol/L',
                    'ranges': [(0, 99, None, 0, 6.84)],
-                   "LONIC": "Bilirubin.direct [Moles/volume] in Serum or Plasma",
-                   "MEDS_CODE": "LOINC/14629-0"},
+                   "LONIC": "Bilirubin.direct [Moles/volume] in Serum or Plasma"},
             'TB': {
                 'unit': 'μmol/L',
                 'ranges': [(0, 99, None, 0, 23)],
-                "LONIC": "Bilirubin.total [Moles/volume] in Serum or Plasma",
-                "MEDS_CODE": "LOINC/14631-6"
+                "LONIC": "Bilirubin.total [Moles/volume] in Serum or Plasma"
             },
             'Bile_Acid': {'unit': 'μmol/L',
                           'ranges': [(0, 99, None, 0.01, 10)],
-                          "LONIC": "Bile acid [Moles/volume] in Serum or Plasma",
-                          "MEDS_CODE": "LOINC/14628-2"},
+                          "LONIC": "Bile acid [Moles/volume] in Serum or Plasma"},
             'CR': {
                 'unit': 'μmol/L',
                 'ranges': [
@@ -436,14 +414,12 @@ class RenjiDataset(Dataset):
                     (13, 16, 'M', 37, 93), (13, 16, 'F', 33, 75),
                     (16, 99, 'M', 52, 101), (16, 99, 'F', 39, 76),
                 ],
-                "LONIC": "Creatinine [Moles/volume] in Blood",
-                "MEDS_CODE": "LOINC/59826-8"
+                "LONIC": "Creatinine [Moles/volume] in Blood"
             },
             'Glucose': {
                 'unit': 'mmol/L',
                 'ranges': [(0, 99, None, 3.9, 6.1)],
-                "LONIC": "Glucose [Moles/volume] in Capillary blood by Glucometer",
-                "MEDS_CODE": "LOINC/14743-9"
+                "LONIC": "Glucose [Moles/volume] in Capillary blood by Glucometer"
             },
             'Triglyceride': {'unit': 'mmol/L',
                              'ranges': [(0, 99, None, 0, 1.7)],
@@ -452,8 +428,7 @@ class RenjiDataset(Dataset):
                                 {'label': 'Elevated', 'range': (0, 99, None, 1.7, 2.3)},
                                 {'label': 'Very High', 'range': (0, 99, None, 2.3, float('inf'))},
                             ],
-                             "LONIC": "Triglyceride [Moles/volume] in Serum or Plasma",
-                             "MEDS_CODE": "LOINC/14927-8"},
+                             "LONIC": "Triglyceride [Moles/volume] in Serum or Plasma"},
             'Cholesterol': {'unit': 'mmol/L',
                             'ranges': [(0, 99, None, 0, 5.2)],
                             'severity_bands': [
@@ -461,74 +436,57 @@ class RenjiDataset(Dataset):
                                 {'label': 'Elevated', 'range': (0, 99, None, 5.2, 6.2)},
                                 {'label': 'Very High', 'range': (0, 99, None, 6.2, float('inf'))},
                             ],
-                            "LONIC": "Cholesterol [Moles/volume] in Serum or Plasma",
-                            "MEDS_CODE": "LOINC/14647-2"},
+                            "LONIC": "Cholesterol [Moles/volume] in Serum or Plasma"},
             'Uric_Acid': {
                 'unit': 'μmol/L',
                 'ranges': [
                     (0, 99, None, 155, 428),
                 ],
-                "LONIC": "Urate [Mass/volume] in Serum or Plasma",
-                "MEDS_CODE": "LOINC/3084-1"
+                "LONIC": "Urate [Mass/volume] in Serum or Plasma"
             },
             'PT': {'unit': 's',
                    'ranges': [(0, 99, None, 9.4, 12.5)],
-                   "LONIC": "Prothrombin time (PT) in Blood by Coagulation assay",
-                    "MEDS_CODE": "LOINC/5964-2"},
+                   "LONIC": "Prothrombin time (PT) in Blood by Coagulation assay"},
             'INR': {'unit': '',
                     'ranges': [(0, 99, None, 0.8, 1.15)],
-                    "LONIC": "INR in Blood by Coagulation assay",
-                    "MEDS_CODE": "LOINC/34714-6"},
+                    "LONIC": "INR in Blood by Coagulation assay"},
             'Blood_Ammonia': {'unit': 'μmol/L',
                               'ranges': [(0, 99, None, 9, 30)],
-                              "LONIC": "Ammonia [Moles/volume] in Plasma",
-                              "MEDS_CODE": "LOINC/16362-6"},
+                              "LONIC": "Ammonia [Moles/volume] in Plasma"},
             'Tacrolimus_Conc': {'unit': 'ng/mL',
                                 'ranges': [],
-                                "LONIC": "Tacrolimus [Mass/volume] in Serum or Plasma",
-                                "MEDS_CODE": "LOINC/32721-3"},
+                                "LONIC": "Tacrolimus [Mass/volume] in Serum or Plasma"},
             'CsA_Trough': {'unit': 'ng/mL',
                            'ranges': [],
-                           "LONIC": "cycloSPORINE [Mass/volume] in Blood",
-                           "MEDS_CODE": "LOINC/3520-4"},
+                           "LONIC": "cycloSPORINE [Mass/volume] in Blood"},
             'CsA_Peak': {'unit': 'ng/mL',
                          'ranges': [],
-                         "LONIC": "cycloSPORINE [Mass/volume] in Blood --2 hours post dose",
-                         "MEDS_CODE": "LOINC/32997-9"},
+                         "LONIC": "cycloSPORINE [Mass/volume] in Blood --2 hours post dose"},
             'Rapa_Conc': {'unit': 'ng/mL',
                           'ranges': [(0, 99, None, 5, 20)],
-                          "LONIC": "Sirolimus [Mass/volume] in Blood",
-                          "MEDS_CODE": "LOINC/29247-4"},
+                          "LONIC": "Sirolimus [Mass/volume] in Blood"},
             'CMV_DNA': {'unit': 'copies/mL',
                         'ranges': [(0, 99, None, 0, 400)],
-                        "LONIC": "Cytomegalovirus DNA [#/volume] (viral load) in Blood by NAA with probe detection",
-                        "MEDS_CODE": "LOINC/29604-6"},
+                        "LONIC": "Cytomegalovirus DNA [#/volume] (viral load) in Blood by NAA with probe detection"},
             'EBV_DNA': {'unit': 'copies/mL',
                         'ranges': [(0, 99, None, 0, 400)],
-                        "LONIC": "Epstein Barr virus DNA [#/volume] (viral load) in Specimen by NAA with probe detection",
-                        "MEDS_CODE": "LOINC/32585-2"},
+                        "LONIC": "Epstein Barr virus DNA [#/volume] (viral load) in Specimen by NAA with probe detection"},
             'HBV_DNA': {'unit': 'IU/mL',
                         'ranges': [(0, 99, None, 0, 20)],
-                        "LONIC": "Hepatitis B virus DNA [Units/volume] (viral load) in Serum or Plasma by NAA with probe detection",
-                        "MEDS_CODE": "LOINC/42595-9"},
+                        "LONIC": "Hepatitis B virus DNA [Units/volume] (viral load) in Serum or Plasma by NAA with probe detection"},
             'HBsAg': {'unit': 'COI',
                       'ranges': [(0, 99, None, 0, 1)],
-                      "LONIC": "Hepatitis B virus surface Ag [Presence] in Serum or Plasma by Immunoassay",
-                      "MEDS_CODE": "LOINC/5196-1"},
+                      "LONIC": "Hepatitis B virus surface Ag [Presence] in Serum or Plasma by Immunoassay"},
             'HBsAb': {'unit': 'mIU/mL',
                       'ranges': [(0, 99, None, 0, 10)],
-                      "LONIC": "Hepatitis B virus surface Ab [Units/volume] in Serum or Plasma by Immunoassay",
-                      "MEDS_CODE": "LOINC/5193-8"},
+                      "LONIC": "Hepatitis B virus surface Ab [Units/volume] in Serum or Plasma by Immunoassay"},
             'HBeAg': {'unit': 'COI',
                       'ranges': [(0, 99, None, 0, 1)],
-                      "LONIC": "Hepatitis B virus e Ag [Presence] in Serum or Plasma by Immunoassay",
-                      "MEDS_CODE": "LOINC/13954-3"},
+                      "LONIC": "Hepatitis B virus e Ag [Presence] in Serum or Plasma by Immunoassay"},
             'HBeAb': {'unit': 'COI', 'ranges': [(0, 99, None, 1, float('inf'))],
-                      "LONIC": "Hepatitis B virus e Ab [Presence] in Serum or Plasma by Immunoassay",
-                      "MEDS_CODE": "LOINC/13953-5"},
+                      "LONIC": "Hepatitis B virus e Ab [Presence] in Serum or Plasma by Immunoassay"},
             'HBcAb': {'unit': 'COI', 'ranges': [(0, 99, None, 1, float('inf'))],
-                      "LONIC": "Hepatitis B virus core Ab [Presence] in Serum or Plasma by Immunoassay",
-                      "MEDS_CODE": "LOINC/13952-7"},
+                      "LONIC": "Hepatitis B virus core Ab [Presence] in Serum or Plasma by Immunoassay"},
         }
 
     def _get_reference_range(self, lab_item, age_years, gender=None, postop_day=None, first_drug_days=None):
@@ -1002,139 +960,6 @@ class RenjiDataset(Dataset):
             })
         return pd.DataFrame(data)
 
-    def _build_static_text(self, features):
-        """Convert static features to markdown text."""
-        lines = ["## Patient Information\n| Feature | Value | Unit |\n| --- | --- | --- |"]
-        for k, v in features.items():
-            # Map value if it's Chinese
-            v_str = str(v).strip()
-            if v_str in self.ZH_VALUE_MAP:
-                v_str = self.ZH_VALUE_MAP[v_str]
-            
-            item_name = k
-            unit = ""
-            
-            # Handle special static features with units
-            if 'Weight (kg)' in item_name:
-                item_name = item_name.replace(' (kg)', '')
-                unit = 'kg'
-            elif 'Weight (g)' in item_name:
-                item_name = item_name.replace(' (g)', '')
-                unit = 'g'
-                
-            lines.append(f"| {item_name} | {v_str} | {unit} |")
-        return "\n".join(lines)
-
-    def _process_followup_text(self, df_slice, age_years=None, gender=None):
-        """Convert follow-up DataFrame to markdown text.
-        
-        Args:
-            df_slice: DataFrame of follow-up records
-            age_years: Patient age in years (for reference range lookup)
-            gender: 'M' or 'F' (for reference range lookup)
-        """
-        if df_slice.empty or '报告日期' not in df_slice.columns:
-            return ""
-
-        med_rows = []
-        lab_rows = []
-        first_drug_days = self._get_first_drug_days(df_slice)
-
-        for _, row in df_slice.iterrows():
-            base_time = row.get('报告日期')
-            postop_day = row.get('术后天数')
-            for col, val in row.items():
-                if pd.isna(val) or val == '':
-                    continue
-                if col in {'报告日期', '术后天数'}:
-                    continue
-
-                value_parts = self._split_multivalue_parts(val)
-                interval_hours = 24.0 / len(value_parts) if len(value_parts) > 1 else 0.0
-
-                for part_idx, part in enumerate(value_parts):
-                    event_time = pd.to_datetime(base_time)
-                    if pd.notna(event_time):
-                        event_time = event_time + pd.Timedelta(hours=part_idx * interval_hours)
-
-                    if col in self.med_cols_en:
-                        col_meta = self.MED_META[col]
-                        med_rows.append(
-                            {
-                                "Time": event_time,
-                                "Item": col_meta['str'],
-                                "Value": str(part).strip(),
-                                "Unit": col_meta['unit'],
-                            }
-                        )
-                    elif col in self.LAB_META:
-                        lab_meta = self.LAB_META[col]
-                        item_name = lab_meta['LONIC']
-                        desc = self._describe_lab_value(
-                            col,
-                            part,
-                            age_years,
-                            gender,
-                            postop_day=postop_day,
-                            first_drug_days=first_drug_days,
-                        )
-                        lab_rows.append(
-                            {
-                                "Time": event_time,
-                                "Item": item_name,
-                                "Value": desc["value"],
-                                "Unit": desc["unit"],
-                                "Ref_range_lower": desc["low_str"],
-                                "Ref_range_upper": desc["high_str"],
-                                "Flag": desc["flag"],
-                            }
-                        )
-
-        texts = []
-        all_times = sorted(
-            {row["Time"] for row in med_rows + lab_rows if pd.notna(row["Time"])}
-        )
-
-        for current_time in all_times:
-            t_str = pd.to_datetime(current_time).strftime('%Y-%m-%d %H:%M:%S')
-            current_med_rows = [row for row in med_rows if row["Time"] == current_time]
-            current_lab_rows = [row for row in lab_rows if row["Time"] == current_time]
-
-            day_text = []
-            if current_med_rows:
-                header = "| Drug | Dose Value rx | Dose Unit rx |\n| ------ | ------ | ------ |"
-                med_lines = [
-                    f"| {row['Item']} | {row['Value']} | {row['Unit']} |"
-                    for row in current_med_rows
-                ]
-                day_text.append(f"## Medication [{t_str}]\n" + "\n".join([header] + med_lines))
-
-            if current_lab_rows:
-                header = "| Item Name | Value | Unit | Ref_range_lower | Ref_range_upper | Flag |\n| ------ | ------ | ------ | ------ | ------ | ------ |"
-                lab_lines = [
-                    f"| {row['Item']} | {row['Value']} | {row['Unit']} | {row['Ref_range_lower']} | {row['Ref_range_upper']} | {row['Flag']} |"
-                    for row in current_lab_rows
-                ]
-                day_text.append(f"## Laboratory Test [{t_str}]\n" + "\n".join([header] + lab_lines))
-
-            if day_text:
-                texts.append("\n\n".join(day_text))
-
-        return "\n\n".join(texts)
-
-    def free_text_input_process(self, static_features, df_followup, age_years=None, gender=None):
-        sections = []
-
-        static_text = self._build_static_text(static_features)
-        if static_text:
-            sections.append(static_text)
-
-        followup_text = self._process_followup_text(df_followup, age_years, gender)
-        if followup_text:
-            sections.append(followup_text)
-
-        return "\n\n".join(sections)
-
     def structed_EHR_input_process(self, static_features, df_followup, surgery_date=None, age_years=None, gender=None):
         measurement_tables = {}
         first_drug_days = self._get_first_drug_days(df_followup)
@@ -1217,205 +1042,6 @@ class RenjiDataset(Dataset):
 
         return final_table
 
-    def structured_text_input_process(self, measurement_table):
-        if measurement_table is None or measurement_table.empty:
-            return ""
-
-        section_order = [
-            ("person", "Patient Static Information"),
-            ("drug_exposure", "Medication"),
-            ("measurement", "Laboratory Examination"),
-        ]
-        sections = []
-
-        table = measurement_table.copy()
-        if 'Time' in table.columns:
-            table['Time'] = pd.to_datetime(table['Time'])
-            table['Time'] = table['Time'].dt.strftime('%Y-%m-%d %H:%M:%S')
-            table['Time'] = table['Time'].fillna('')
-
-        for category, title in section_order:
-            if 'Category' not in table.columns:
-                continue
-            sub_df = table[table['Category'] == category].copy()
-            if sub_df.empty:
-                continue
-
-            if category == "person":
-                lines = [
-                    f"## {title}",
-                    "| Item | Value | Unit |",
-                    "| --- | --- | --- |",
-                ]
-                for _, row in sub_df.iterrows():
-                    lines.append(
-                        f"| {str(row['Item']).strip()} | {str(row['Value']).strip()} | {str(row['Unit']).strip()} |"
-                    )
-            else:
-                lines = [
-                    f"## {title}",
-                    "| Time | Item | Value | Unit |",
-                    "| --- | --- | --- | --- |",
-                ]
-                for _, row in sub_df.iterrows():
-                    lines.append(
-                        f"| {str(row['Time']).strip()} | {str(row['Item']).strip()} | {str(row['Value']).strip()} | {str(row['Unit']).strip()} |"
-                    )
-
-            sections.append("\n".join(lines))
-
-        return "\n\n".join(sections)
-
-    def remaining_text_input_process(self, static_features, df_followup, age_years=None, gender=None):
-        return self.free_text_input_process(
-            static_features=static_features,
-            df_followup=df_followup,
-            age_years=age_years,
-            gender=gender,
-        )
-
-    def _normalize_meds_fragment(self, value):
-        value_str = str(value).strip()
-        normalized = []
-        for ch in value_str:
-            if ch.isalnum():
-                normalized.append(ch)
-            else:
-                normalized.append("_")
-        return "_".join(part for part in "".join(normalized).split("_") if part)
-
-    def _meds_value_fields(self, value):
-        value_str = str(value).strip()
-        if re.fullmatch(r'-?\d+(?:\.\d+)?', value_str):
-            return float(value_str), ""
-        if value_str == "阴性":
-            return None, "Normal"
-        if value_str == "阳性":
-            return None, "Abnormal"
-        return None, value_str
-
-    def meds_input_process(self, subject_id, static_features, df_followup, surgery_date):
-        rows = []
-        static_time = pd.to_datetime(surgery_date)
-
-        for feature_name, value in static_features.items():
-            value_str = str(value).strip()
-            if value_str in self.ZH_VALUE_MAP:
-                value_str = self.ZH_VALUE_MAP[value_str]
-
-            item_name = feature_name
-            unit = ""
-            if 'Weight (kg)' in item_name:
-                item_name = item_name.replace(' (kg)', '')
-                unit = 'kg'
-            elif 'Weight (g)' in item_name:
-                item_name = item_name.replace(' (g)', '')
-                unit = 'g'
-
-            numeric_value, text_value = self._meds_value_fields(value_str)
-            code = f"PERSON//{self._normalize_meds_fragment(item_name)}"
-            if text_value:
-                code = f"{code}//{self._normalize_meds_fragment(text_value)}"
-                text_value = ""
-
-            rows.append(
-                {
-                    "subject_id": subject_id,
-                    "time": static_time,
-                    "code": code,
-                    "numeric_value": numeric_value,
-                    "text_value": text_value,
-                    "unit": unit,
-                    "omop_table": "person",
-                }
-            )
-
-        for _, row in df_followup.iterrows():
-            base_time = pd.to_datetime(row['报告日期'])
-
-            for col, val in row.items():
-                if col in {'报告日期', '术后天数'}:
-                    continue
-                if pd.isna(val) or val == '':
-                    continue
-
-                value_parts = self._split_multivalue_parts(val)
-                interval_hours = 24.0 / len(value_parts) if len(value_parts) > 1 else 0.0
-
-                for part_idx, part in enumerate(value_parts):
-                    event_time = base_time + pd.Timedelta(hours=part_idx * interval_hours)
-                    numeric_value, text_value = self._meds_value_fields(part)
-
-                    if col in self.med_cols_en:
-                        meta = self.MED_META[col]
-                        code = meta['MEDS_CODE']
-                        unit = meta['unit']
-                        omop_table = "drug_exposure"
-                    elif col in self.LAB_META:
-                        meta = self.LAB_META[col]
-                        code = meta['MEDS_CODE']
-                        unit = meta['unit']
-                        omop_table = "measurement"
-                    else:
-                        continue
-
-                    rows.append(
-                        {
-                            "subject_id": subject_id,
-                            "time": event_time,
-                            "code": code,
-                            "numeric_value": numeric_value,
-                            "text_value": text_value,
-                            "unit": unit,
-                            "omop_table": omop_table,
-                        }
-                    )
-
-        meds_df = pd.DataFrame(
-            rows,
-            columns=["subject_id", "time", "code", "numeric_value", "text_value", "unit", "omop_table"],
-        )
-        meds_df["time"] = pd.to_datetime(meds_df["time"])
-        meds_df = meds_df.sort_values(by=["time"]).reset_index(drop=True)
-        meds_df["time"] = meds_df["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
-
-        meds_events = []
-        for row in meds_df.to_dict(orient="records"):
-            event = {
-                "code": row["code"],
-                "start": row["time"],
-                "end": row["time"],
-            }
-
-            numeric_value = row["numeric_value"]
-            text_value = str(row["text_value"]).strip()
-            if pd.notna(numeric_value):
-                event["value"] = float(numeric_value)
-            elif text_value:
-                event["value"] = text_value
-
-            unit = str(row["unit"]).strip()
-            if unit:
-                event["unit"] = unit
-
-            omop_table = str(row["omop_table"]).strip()
-            if omop_table:
-                event["omop_table"] = omop_table
-
-            meds_events.append(event)
-
-        from hf_ehr.config import Event
-
-        hf_ehr_events = []
-        for event in meds_events:
-            kwargs = {"code": event["code"]}
-            for key in ("value", "unit", "start", "end", "omop_table"):
-                if key in event and event[key] not in (None, ""):
-                    kwargs[key] = event[key]
-            hf_ehr_events.append(Event(**kwargs))
-
-        return meds_df, meds_events, hf_ehr_events
-
     def __getitem__(self, idx):
         sample = self.samples[idx]
         
@@ -1469,56 +1095,26 @@ class RenjiDataset(Dataset):
                 "instruction": instruction,
             }
         )
-        if self.table_mode in {'table_only', 'table_plus_rest_text'}:
-            final_table = self.structed_EHR_input_process(
-                static_features=static_features,
-                df_followup=df_followup,
-                surgery_date=surgery_date,
-                age_years=age_years,
-                gender=gender,
-            )
-            input_text = "" if self.table_mode == 'table_only' else self.structured_text_input_process(final_table)
-        else:
-            input_text = self.free_text_input_process(
-                static_features=static_features,
-                df_followup=df_followup,
-                age_years=age_years,
-                gender=gender,
-            )
-            final_table = None
+        final_table = self.structed_EHR_input_process(
+            static_features=static_features,
+            df_followup=df_followup,
+            surgery_date=surgery_date,
+            age_years=age_years,
+            gender=gender,
+        )
         
 
         output_sample = {
             "idx": idx,
             "instruction": instruction,
-            "input": input_text,
+            "input": "",
             "output": output_label if isinstance(output_label, torch.Tensor) else str(output_label),
             "task_info": task_info,
+            "measurement_table": final_table,
         }
         
         output_sample["candidates"] = ["0", "1"]
 
-        if self.return_meds:
-            meds_df, meds_events, hf_ehr_events = self.meds_input_process(
-                subject_id=fname_key,
-                static_features=static_features,
-                df_followup=df_followup,
-                surgery_date=surgery_date,
-            )
-            output_sample["meds_table"] = meds_df
-            output_sample["meds_events"] = meds_events
-            output_sample["hf_ehr_events"] = hf_ehr_events
-        
-        if self.table_mode in {'table_only', 'table_plus_rest_text'}:
-            output_sample["measurement_table"] = final_table
-            if self.table_mode == 'table_plus_rest_text':
-                output_sample["remaining_text"] = self.remaining_text_input_process(
-                    static_features=static_features,
-                    df_followup=df_followup,
-                    age_years=age_years,
-                    gender=gender,
-                )
-            
         return output_sample
 
     def _expand_multivalue_rows(self, df):
@@ -1562,62 +1158,497 @@ class RenjiDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
-    @staticmethod
-    def table_to_markdown(measurement_table):
-        if measurement_table is None or measurement_table.empty:
-            return ""
 
-        sections = []
-        table = measurement_table.copy()
-        if 'Time' in table.columns:
-            table['Time'] = pd.to_datetime(table['Time'])
-            table['Time'] = table['Time'].dt.strftime('%Y-%m-%d %H:%M:%S')
-            table['Time'] = table['Time'].fillna('')
+STAGE_SPECS = (
+    {"stage_id": 0, "start_day": 0.0, "end_day": 31.0, "num_bins": 31},
+    {"stage_id": 1, "start_day": 31.0, "end_day": 181.0, "num_bins": 150},
+    {"stage_id": 2, "start_day": 181.0, "end_day": 366.0, "num_bins": 185},
+)
+MAX_SURVIVAL_BINS = 185
+EVENT_LABEL_COLUMN = "他克莫司浓度_label"
+DEATH_SURVIVAL_HORIZON_DAYS = 1825
+DEATH_STAGE_SPECS = (
+    {
+        "stage_id": 0,
+        "start_day": 0.0,
+        "end_day": float(DEATH_SURVIVAL_HORIZON_DAYS),
+        "prediction_day": 0.0,
+        "num_bins": DEATH_SURVIVAL_HORIZON_DAYS,
+    },
+)
+MAX_DEATH_SURVIVAL_BINS = DEATH_SURVIVAL_HORIZON_DAYS
 
-        for category, title in [
-            ("person", "Patient Static Information"),
-            ("drug_exposure", "Medication"),
-            ("measurement", "Laboratory Examination"),
-        ]:
-            if 'Category' not in table.columns:
+
+def load_patient_subset(patient_subset_path):
+    if patient_subset_path is None:
+        return None
+    with open(patient_subset_path, "r", encoding="utf-8") as file:
+        patient_files = json.load(file)
+    if not isinstance(patient_files, list):
+        raise ValueError("patient_subset_path must contain a JSON list")
+    return {
+        os.path.splitext(os.path.basename(str(patient_file)))[0]
+        for patient_file in patient_files
+    }
+
+
+def build_survival_instruction(task_schema, sample):
+    stage_window = (
+        f"[{int(sample['stage_start_day'])}, {int(sample['stage_end_day'])}) "
+        "days post-transplant"
+    )
+    instruction = task_schema["instruction_template"].format(
+        prediction_day=f"{sample['prediction_day']:g}",
+        stage_window=stage_window,
+    )
+    return instruction, stage_window
+
+
+def build_piecewise_survival_target(
+    time_to_event: float,
+    event_observed: bool,
+    num_bins: int,
+    max_bins: int = MAX_SURVIVAL_BINS,
+):
+    """Encode follow-up time using one-day intervals (k, k + 1]."""
+    if time_to_event < 0:
+        raise ValueError("time_to_event must be non-negative")
+    if not 0 < num_bins <= max_bins:
+        raise ValueError("num_bins must be in [1, max_bins]")
+
+    observed_time = min(float(time_to_event), float(num_bins))
+    bin_exposure = np.zeros(max_bins, dtype=np.float32)
+    event_bins = np.zeros(max_bins, dtype=np.float32)
+    stage_mask = np.zeros(max_bins, dtype=np.float32)
+    stage_mask[:num_bins] = 1.0
+
+    full_bins = min(int(math.floor(observed_time)), num_bins)
+    if full_bins:
+        bin_exposure[:full_bins] = 1.0
+    if full_bins < num_bins:
+        bin_exposure[full_bins] = observed_time - full_bins
+
+    if event_observed and 0.0 < observed_time <= num_bins:
+        event_bin = min(int(math.ceil(observed_time) - 1), num_bins - 1)
+        event_bins[event_bin] = 1.0
+
+    return bin_exposure, event_bins, stage_mask
+
+
+def _parse_binary_label(value):
+    if pd.isna(value) or str(value).strip() == "":
+        return None
+    try:
+        return 1 if float(value) > 0 else 0
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_truthy(value):
+    if pd.isna(value):
+        return False
+    text = str(value).strip().lower()
+    return text in {"true", "1", "yes", "y", "死亡", "deceased", "dead"}
+
+
+def _days_between(start, end):
+    start = pd.to_datetime(start, errors="coerce")
+    end = pd.to_datetime(end, errors="coerce")
+    if pd.isna(start) or pd.isna(end):
+        return None
+    return max((end - start).total_seconds() / 86400.0, 0.0)
+
+
+class RenjiTacrolimusSurvivalDataset(RenjiDataset):
+    """One time-to-event sample per patient and postoperative stage."""
+
+    STAGE_SPECS = STAGE_SPECS
+    MAX_SURVIVAL_BINS = MAX_SURVIVAL_BINS
+
+    def __init__(
+        self,
+        root_dir,
+        split="train",
+        max_samples=None,
+        shuffle=False,
+        patient_subset_path=None,
+        death_tte_index_dir=None,
+    ):
+        self.patient_subset_path = patient_subset_path
+        self.patient_subset = load_patient_subset(patient_subset_path)
+        self.death_tte_index_dir = death_tte_index_dir
+        self.root_dir = root_dir
+        self.split = split
+        self.max_samples = max_samples
+        self.target_metrics = None
+        self.target_prediction_points = []
+        self.active_points = []
+        self.shuffle = shuffle
+        self.task_schema = deepcopy(self.TASK_INFO)
+        self.followup_dir = os.path.join(self.root_dir, "follow_ups")
+        self.index_dir = os.path.join(self.root_dir, "index")
+        self._init_configs()
+        self._load_auxiliary_data()
+
+        split_table = pd.read_csv(
+            os.path.join(self.root_dir, "all_samples.csv"),
+            encoding="utf-8-sig",
+        )
+        split_files = split_table.loc[
+            split_table["split"] == split,
+            "file_name",
+        ].drop_duplicates()
+        self.filenames = split_files.astype(str).tolist()
+        self._valid_followup_cache = {}
+        self.samples = self._build_index()
+
+    def _read_raw_followup(self, fname):
+        path = os.path.join(
+            self.followup_dir,
+            fname if fname.endswith(".csv") else f"{fname}.csv",
+        )
+        df = pd.read_csv(path, encoding="utf-8-sig")
+        if "术后天数" not in df.columns:
+            return pd.DataFrame()
+        df["术后天数"] = pd.to_numeric(df["术后天数"], errors="coerce")
+        if "报告日期" in df.columns:
+            df["报告日期"] = pd.to_datetime(df["报告日期"], errors="coerce")
+            df = df.sort_values(["术后天数", "报告日期"], na_position="last")
+        else:
+            df = df.sort_values("术后天数", na_position="last")
+        return df.dropna(subset=["术后天数"]).reset_index(drop=True)
+
+    def _build_index(self):
+        _rank0_print(f"[{self.split}] Building tacrolimus survival sample index...")
+        samples = []
+        split_filenames = self.filenames
+        if self.patient_subset is not None:
+            split_filenames = [
+                fname
+                for fname in self.filenames
+                if os.path.splitext(os.path.basename(str(fname)))[0]
+                in self.patient_subset
+            ]
+            _rank0_print(
+                f"[{self.split}] Patient subset filter: "
+                f"{len(split_filenames)}/{len(self.filenames)} split patients retained "
+                f"from {self.patient_subset_path}"
+            )
+            if not split_filenames:
+                raise ValueError(
+                    f"No {self.split} patients matched {self.patient_subset_path}"
+                )
+
+        for fname in tqdm(
+            split_filenames,
+            desc=f"[{self.split}] Survival indexing",
+            disable=not _is_main_process(),
+        ):
+            fname_key = os.path.splitext(fname)[0]
+            if fname_key not in self.patient_info_map:
                 continue
-            sub_df = table[table['Category'] == category]
-            if sub_df.empty:
+            raw_followup = self._read_raw_followup(fname)
+
+            for spec in self.STAGE_SPECS:
+                stage_rows = raw_followup[
+                    (raw_followup["术后天数"] >= spec["start_day"])
+                    & (raw_followup["术后天数"] < spec["end_day"])
+                ]
+                if stage_rows.empty:
+                    continue
+
+                prediction_day = float(stage_rows["术后天数"].iloc[0])
+                future_rows = stage_rows[stage_rows["术后天数"] > prediction_day]
+                event_day = None
+                if EVENT_LABEL_COLUMN in future_rows.columns:
+                    for _, row in future_rows.iterrows():
+                        if _parse_binary_label(row[EVENT_LABEL_COLUMN]) == 1:
+                            event_day = float(row["术后天数"])
+                            break
+
+                event_observed = event_day is not None
+                observed_day = (
+                    event_day
+                    if event_observed
+                    else float(stage_rows["术后天数"].iloc[-1])
+                )
+                time_to_event = max(0.0, observed_day - prediction_day)
+                exposure, event_bins, stage_mask = build_piecewise_survival_target(
+                    time_to_event=time_to_event,
+                    event_observed=event_observed,
+                    num_bins=spec["num_bins"],
+                )
+                samples.append(
+                    {
+                        "fname": fname,
+                        "fname_key": fname_key,
+                        "stage_id": spec["stage_id"],
+                        "stage_start_day": spec["start_day"],
+                        "stage_end_day": spec["end_day"],
+                        "num_bins": spec["num_bins"],
+                        "prediction_day": prediction_day,
+                        "cutoff_day": prediction_day,
+                        "observed_day": observed_day,
+                        "time_to_event": time_to_event,
+                        "event_observed": event_observed,
+                        "stage_end_horizon": spec["end_day"] - prediction_day,
+                        "bin_exposure": exposure,
+                        "event_bins": event_bins,
+                        "stage_mask": stage_mask,
+                    }
+                )
+
+        if self.max_samples and len(samples) > self.max_samples:
+            indices = np.random.choice(len(samples), self.max_samples, replace=False)
+            samples = [samples[index] for index in indices]
+        if self.shuffle:
+            np.random.shuffle(samples)
+
+        events = sum(sample["event_observed"] for sample in samples)
+        _rank0_print(
+            f"[{self.split}] Survival samples={len(samples)}, events={events}, "
+            f"censored={len(samples) - events}"
+        )
+        return samples
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        df_followup = self._load_followup_data(sample)
+        fname_key = sample["fname_key"]
+        static_features = self._get_static_features(fname_key)
+        patient_info = self.patient_info_map[fname_key]
+        recipient_gender = patient_info["recipient_gender"]
+        gender = "M" if str(recipient_gender).upper() in {"M", "MALE", "男"} else "F"
+        dob = pd.to_datetime(patient_info["date_of_birth"], errors="coerce")
+        if df_followup.empty:
+            raise ValueError(f"No valid follow-up context for {fname_key}")
+
+        first_row = df_followup.iloc[0]
+        surgery_date = pd.to_datetime(first_row["报告日期"]) - pd.Timedelta(
+            days=float(first_row["术后天数"])
+        )
+        age_years = (pd.to_datetime(first_row["报告日期"]) - dob).days / 365.25
+        if not np.isfinite(age_years):
+            age_years = 0.0
+        age_years = max(0.0, age_years)
+        task_info = deepcopy(self.task_schema["tacrolimus_abnormal_survival"])
+        instruction, stage_window = build_survival_instruction(
+            task_info,
+            sample,
+        )
+        task_info.update(
+            {
+                "task": "tacrolimus_abnormal_survival",
+                "stage_id": sample["stage_id"],
+                "stage_window": stage_window,
+                "prediction_day": sample["prediction_day"],
+                "observed_day": sample["observed_day"],
+                "time_to_event": sample["time_to_event"],
+                "event_observed": sample["event_observed"],
+                "stage_end_horizon": sample["stage_end_horizon"],
+            }
+        )
+
+        final_table = self.structed_EHR_input_process(
+            static_features=static_features,
+            df_followup=df_followup,
+            surgery_date=surgery_date,
+            age_years=age_years,
+            gender=gender,
+        )
+        survival_metadata = np.zeros(self.MAX_SURVIVAL_BINS, dtype=np.float32)
+        survival_metadata[0] = sample["stage_end_horizon"]
+        survival_metadata[1] = sample["stage_id"]
+        labels = torch.tensor(
+            np.stack(
+                [
+                    sample["bin_exposure"],
+                    sample["event_bins"],
+                    sample["stage_mask"],
+                    survival_metadata,
+                ]
+            ),
+            dtype=torch.float32,
+        )
+        return {
+            "idx": idx,
+            "instruction": instruction,
+            "input": "",
+            "output": labels,
+            "stage_id": sample["stage_id"],
+            "task_info": task_info,
+            "measurement_table": final_table,
+        }
+
+
+class RenjiDeathSurvivalDataset(RenjiDataset):
+    """Death time-to-event samples at fixed postoperative prediction points."""
+
+    STAGE_SPECS = DEATH_STAGE_SPECS
+    MAX_SURVIVAL_BINS = MAX_DEATH_SURVIVAL_BINS
+
+    def __init__(
+        self,
+        root_dir,
+        split="train",
+        max_samples=None,
+        shuffle=False,
+        patient_subset_path=None,
+    ):
+        self.patient_subset_path = patient_subset_path
+        self.patient_subset = load_patient_subset(patient_subset_path)
+        self.root_dir = root_dir
+        self.split = split
+        self.max_samples = max_samples
+        self.target_metrics = None
+        self.target_prediction_points = []
+        self.active_points = []
+        self.shuffle = shuffle
+        self.task_schema = deepcopy(self.TASK_INFO)
+        self.followup_dir = os.path.join(self.root_dir, "follow_ups")
+        self.index_dir = os.path.join(self.root_dir, "index")
+        self._init_configs()
+        self._load_patient_info_data()
+        self._valid_followup_cache = {}
+        self.samples = self._build_index()
+
+    def _load_patient_info_data(self):
+        patient_info_path = os.path.join(
+            self.root_dir,
+            "患儿基本信息总表251023_含免疫事件.csv",
+        )
+        self.patient_info_df = pd.read_csv(patient_info_path, encoding="utf-8-sig")
+        self.patient_info_map = {}
+        for _, row in self.patient_info_df.iterrows():
+            key = os.path.splitext(str(row["file_name"]))[0]
+            self.patient_info_map[key] = row
+        _rank0_print(f"Loaded patient info: {len(self.patient_info_map)} patients")
+
+    def _index_path(self):
+        index_dir = self.death_tte_index_dir or self.index_dir
+        return os.path.join(index_dir, f"death_tte_{self.split}.csv")
+
+    def _build_index(self):
+        index_path = self._index_path()
+        if not os.path.exists(index_path):
+            raise FileNotFoundError(
+                f"Death TTE index not found: {index_path}. "
+                "Run preprocess/Renji/4_generate_death_tte_index.py first."
+            )
+        _rank0_print(f"[{self.split}] Loading death survival index: {index_path}")
+        index_df = pd.read_csv(index_path)
+        samples = []
+        rows = index_df.to_dict(orient="records")
+        if self.patient_subset is not None:
+            rows = [
+                row
+                for row in rows
+                if str(row.get("fname_key") or os.path.splitext(str(row.get("file_name")))[0])
+                in self.patient_subset
+            ]
+            _rank0_print(
+                f"[{self.split}] Patient subset filter: "
+                f"{len(rows)}/{len(index_df)} index rows retained "
+                f"from {self.patient_subset_path}"
+            )
+            if not rows:
+                raise ValueError(
+                    f"No {self.split} patients matched {self.patient_subset_path}"
+                )
+
+        for row in rows:
+            fname = str(row["file_name"])
+            fname_key = str(row.get("fname_key") or os.path.splitext(fname)[0])
+            if fname_key not in self.patient_info_map:
                 continue
+            samples.append(
+                {
+                    "fname": fname,
+                    "fname_key": fname_key,
+                    "stage_id": int(row["stage_id"]),
+                    "stage_start_day": float(row["stage_start_day"]),
+                    "stage_end_day": float(row["stage_end_day"]),
+                    "num_bins": int(row["num_bins"]),
+                    "prediction_day": float(row["prediction_day"]),
+                    "cutoff_day": float(row["cutoff_day"]),
+                    "observed_day": float(row["observed_day"]),
+                    "time_to_event": float(row["time_to_event"]),
+                    "event_observed": bool(int(row["event_observed"])),
+                    "stage_end_horizon": float(row["stage_end_horizon"]),
+                }
+            )
 
-            if category == "person":
-                lines = [
-                    f"## {title}",
-                    "| Item | Value | Unit |",
-                    "| --- | --- | --- |",
-                ]
-                for _, row in sub_df.iterrows():
-                    lines.append(
-                        f"| {str(row['Item']).strip()} | {str(row['Value']).strip()} | {str(row['Unit']).strip()} |"
-                    )
-            else:
-                lines = [
-                    f"## {title}",
-                    "| Time | Item | Value | Unit |",
-                    "| --- | --- | --- | --- |",
-                ]
-                for _, row in sub_df.iterrows():
-                    lines.append(
-                        f"| {str(row['Time']).strip()} | {str(row['Item']).strip()} | {str(row['Value']).strip()} | {str(row['Unit']).strip()} |"
-                    )
+        if self.max_samples and len(samples) > self.max_samples:
+            indices = np.random.choice(len(samples), self.max_samples, replace=False)
+            samples = [samples[index] for index in indices]
+        if self.shuffle:
+            np.random.shuffle(samples)
 
-            sections.append("\n".join(lines))
+        events = sum(sample["event_observed"] for sample in samples)
+        _rank0_print(
+            f"[{self.split}] Death survival samples={len(samples)}, events={events}, "
+            f"censored={len(samples) - events}"
+        )
+        return samples
 
-        return "\n\n".join(sections)
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        df_followup = self._load_followup_data(sample)
+        fname_key = sample["fname_key"]
+        static_features = self._get_static_features(fname_key)
+        patient_info = self.patient_info_map[fname_key]
+        recipient_gender = patient_info["recipient_gender"]
+        gender = "M" if str(recipient_gender).upper() in {"M", "MALE", "男"} else "F"
+        dob = pd.to_datetime(patient_info["date_of_birth"], errors="coerce")
+        if df_followup.empty:
+            raise ValueError(f"No valid follow-up context for {fname_key}")
 
-    @staticmethod
-    def build_input_text(sample, include_unstructured_text=True, unstructured_key="input"):
-        sections = []
-        table_text = RenjiDataset.table_to_markdown(sample["measurement_table"])
-        if table_text:
-            sections.append(table_text)
-        if include_unstructured_text:
-            unstructured_text = str(sample[unstructured_key]).strip()
-            if unstructured_text and unstructured_text != table_text:
-                sections.append(unstructured_text)
-        return "\n\n".join(sections)
+        first_row = df_followup.iloc[0]
+        surgery_date = pd.to_datetime(first_row["报告日期"]) - pd.Timedelta(
+            days=float(first_row["术后天数"])
+        )
+        age_years = (pd.to_datetime(first_row["报告日期"]) - dob).days / 365.25
+        if not np.isfinite(age_years):
+            age_years = 0.0
+        age_years = max(0.0, age_years)
+        task_info = deepcopy(self.task_schema["death_survival"])
+        instruction, stage_window = build_survival_instruction(
+            task_info,
+            sample,
+        )
+        task_info.update(
+            {
+                "task": "death_survival",
+                "stage_id": sample["stage_id"],
+                "stage_window": stage_window,
+                "prediction_day": sample["prediction_day"],
+                "observed_day": sample["observed_day"],
+                "time_to_event": sample["time_to_event"],
+                "event_observed": sample["event_observed"],
+                "stage_end_horizon": sample["stage_end_horizon"],
+            }
+        )
+
+        final_table = self.structed_EHR_input_process(
+            static_features=static_features,
+            df_followup=df_followup,
+            surgery_date=surgery_date,
+            age_years=age_years,
+            gender=gender,
+        )
+        return {
+            "idx": idx,
+            "instruction": instruction,
+            "input": "",
+            "stage_id": sample["stage_id"],
+            "survival_target": {
+                "time_to_event": sample["time_to_event"],
+                "event_observed": sample["event_observed"],
+                "num_bins": sample["num_bins"],
+                "max_bins": self.MAX_SURVIVAL_BINS,
+                "stage_end_horizon": sample["stage_end_horizon"],
+                "stage_id": sample["stage_id"],
+            },
+            "task_info": task_info,
+            "measurement_table": final_table,
+        }

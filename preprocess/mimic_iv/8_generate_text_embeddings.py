@@ -55,7 +55,6 @@ def build_dataset(root_dir, sample_csv, itemid_representation, concept_map_dir):
         sample_info_path=sample_csv,
         lazy_mode=True,
         shuffle=False,
-        table_mode="table_only",
         itemid_representation=itemid_representation,
         concept_map_dir=concept_map_dir,
         use_table_length_cache=False,

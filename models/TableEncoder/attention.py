@@ -55,10 +55,9 @@ class FlashAttention(nn.Module):
             causal_mask = causal_mask.view(1, 1, seq_len, seq_len)
             attn_mask = causal_mask if attn_mask is None else attn_mask & causal_mask
 
-        # Flash Attention has a known backward bug for seq_len < 64 (e.g. intra-component
-        # attention where seq_len == num_components == 4).  Use mem_efficient backend which:
+        # Flash Attention has a known backward bug for short sequences. Use mem_efficient backend which:
         #   - avoids Flash Attention's small-seq backward CUDA bug
-        #   - uses O(N) memory (unlike math backend which is O(N²) and causes OOM in hierarchical)
+        #   - uses O(N) memory unlike the math backend
         if seq_len < 64:
             ctx = sdpa_kernel([SDPBackend.EFFICIENT_ATTENTION])
             
@@ -185,125 +184,3 @@ class StandardTransformerLayer(nn.Module):
         x = x + self.attn(self.norm1(x.to(self.norm1.weight.dtype)), mask, causal=causal)
         x = x + self.ffn(self.norm2(x.to(self.norm2.weight.dtype)))
         return x
-
-
-class ComponentTransformerLayer(nn.Module):
-    """
-    A Transformer layer that computes 2D attention for tabular components:
-    1. Intra-Measurement Attention: Attends across the components (e.g., Item, Value, Unit) of a single measurement.
-    2. Inter-Measurement Attention: Attends across the sequence of measurements (time steps) for each component.
-    """
-    def __init__(self, dim, heads, dim_head, mlp_dim, dropout=0.0):
-        super().__init__()
-        # Intra-Measurement Attention (Over components)
-        self.norm1_intra = RMSNorm(dim)
-        self.intra_attn = FlashAttention(dim, num_heads=heads, attn_drop=dropout, proj_drop=dropout)
-        
-        # Inter-Measurement Attention (Over sequence length)
-        self.norm1_inter = RMSNorm(dim)
-        self.inter_attn = FlashAttention(dim, num_heads=heads, attn_drop=dropout, proj_drop=dropout)
-        
-        self.norm2 = RMSNorm(dim)
-        self.ffn = FeedForward(dim, mlp_dim, dropout)
-
-    def forward(self, x, seq_mask=None, causal: bool = False):
-        """
-        x: [batch_size, seq_len, num_components, embed_dim]
-        seq_mask: [batch_size, seq_len] (1 for valid, 0 for padding)
-        """
-        batch_size, seq_len, num_components, embed_dim = x.shape
-        
-        # 1. Intra-Measurement Attention (Across the components)
-        # Reshape to [batch_size * seq_len, num_components, embed_dim]
-        x_intra = x.reshape(batch_size * seq_len, num_components, embed_dim)
-        
-        # Apply intra attention. Mask is None because all components within a measurement are always valid
-        norm_intra = self.norm1_intra(x_intra.to(self.norm1_intra.weight.dtype))
-        out_intra = self.intra_attn(norm_intra, mask=None)
-        x_intra = x_intra + out_intra
-        
-        # Reshape back
-        x = x_intra.reshape(batch_size, seq_len, num_components, embed_dim)
-        
-        # 2. Inter-Measurement Attention (Across the sequence length)
-        # Transpose to [batch_size, num_components, seq_len, embed_dim] -> [batch_size * num_components, seq_len, embed_dim]
-        x_inter = x.transpose(1, 2).contiguous().reshape(batch_size * num_components, seq_len, embed_dim)
-        
-        # Expand seq_mask [batch_size, seq_len] for all components: [batch_size * num_components, seq_len]
-        r_mask = None
-        if seq_mask is not None:
-            r_mask = (
-                seq_mask.unsqueeze(1)
-                .repeat(1, num_components, 1)
-                .reshape(batch_size * num_components, seq_len)
-                .contiguous()
-            )
-            
-        # Apply inter attention
-        norm_inter = self.norm1_inter(x_inter.to(self.norm1_inter.weight.dtype))
-        out_inter = self.inter_attn(norm_inter, mask=r_mask, causal=causal)
-        x_inter = x_inter + out_inter
-        
-        # Transpose back: [batch_size, num_components, seq_len, embed_dim] -> [batch_size, seq_len, num_components, embed_dim]
-        x = x_inter.reshape(batch_size, num_components, seq_len, embed_dim).transpose(1, 2).contiguous()
-        
-        # 3. Feed Forward Network
-        x = x + self.ffn(self.norm2(x.to(self.norm2.weight.dtype)))
-        
-        return x
-
-
-class HierarchicalTransformerLayer(nn.Module):
-    """
-    CLS-augmented flat 1D hierarchical attention.
-
-    Input x_full = [CLS_0, CLS_1, ..., CLS_{T-1}, tok_0, tok_1, ..., tok_N]
-    shape: [B, max_T + N, D].
-
-    Three sub-operations per layer:
-      1. Intra-time self-attention  — block-diagonal mask, Flash/mem-efficient SDPA
-      2. Inter-time attention       — on the CLS slice [B, max_T, D] only
-      3. FFN                        — on the full [B, max_T+N, D] sequence
-    """
-
-    def __init__(self, dim, heads, dim_head, mlp_dim, dropout=0.0):
-        super().__init__()
-        self.norm1_intra = RMSNorm(dim)
-        self.intra_attn = FlashAttention(dim, num_heads=heads, attn_drop=dropout, proj_drop=dropout)
-
-        self.norm1_inter = RMSNorm(dim)
-        self.inter_attn = FlashAttention(dim, num_heads=heads, attn_drop=dropout, proj_drop=dropout)
-
-        self.norm2 = RMSNorm(dim)
-        self.ffn = FeedForward(dim, mlp_dim, dropout)
-
-    def forward(self, x_full, full_group_ids, full_seq_mask, inter_mask, max_T, causal: bool = False):
-        """
-        x_full:         [B, max_T + N, D]  — CLS tokens first, then sequence tokens
-        full_group_ids: [B, max_T + N]     — int64; CLS_t has group_id=t, token_i has its time-step index
-        full_seq_mask:  [B, max_T + N]     — float; 1 = valid, 0 = padding
-        inter_mask:     [B, max_T]         — float; 1 = time step exists, 0 = absent
-        max_T:          int                — number of time steps in this batch
-        """
-        # === 1. Intra-time Attention (block-diagonal) ===
-        # CLS_t and tokens of time-step t form one block; cross-block positions are masked out.
-        # mask shape [B, L, L] — handled by FlashAttention's dim==3 branch → [B, 1, L, L]
-        same_group = full_group_ids.unsqueeze(2) == full_group_ids.unsqueeze(1)          # [B, L, L]
-        both_valid = full_seq_mask.bool().unsqueeze(2) & full_seq_mask.bool().unsqueeze(1)  # [B, L, L]
-        intra_mask = same_group & both_valid  # [B, L, L] bool
-
-        norm_full = self.norm1_intra(x_full.to(self.norm1_intra.weight.dtype))
-        x_full = x_full + self.intra_attn(norm_full, mask=intra_mask)
-
-        # === 2. Inter-time Attention (CLS tokens only) ===
-        cls_tokens = x_full[:, :max_T, :]                                           # [B, max_T, D]
-        norm_cls   = self.norm1_inter(cls_tokens.to(self.norm1_inter.weight.dtype))
-        cls_delta  = self.inter_attn(norm_cls, mask=inter_mask, causal=causal)      # inter_mask: [B, max_T]
-
-        # Write updated CLS back and keep the rest of the sequence unchanged
-        x_full = torch.cat([cls_tokens + cls_delta, x_full[:, max_T:, :]], dim=1)
-
-        # === 3. FFN on full sequence ===
-        x_full = x_full + self.ffn(self.norm2(x_full.to(self.norm2.weight.dtype)))
-
-        return x_full

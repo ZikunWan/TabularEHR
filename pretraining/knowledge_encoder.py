@@ -1,54 +1,24 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import gzip
 import json
 import os
 import random
 import sys
 from dataclasses import asdict, dataclass
-from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
-import torch.nn as nn
 from tqdm import tqdm
 from transformers import AutoTokenizer, Trainer, TrainingArguments, set_seed
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-from models.TableEncoder.text_encoder import (
-    KnowledgeEncoderForTrainer,
-    KnowledgeGraphEncoderForTrainer,
-)
-
-
-MRCONSO_COLS = [
-    "CUI",
-    "LAT",
-    "TS",
-    "LUI",
-    "STT",
-    "SUI",
-    "ISPREF",
-    "AUI",
-    "SAUI",
-    "SCUI",
-    "SDUI",
-    "SAB",
-    "TTY",
-    "CODE",
-    "STR",
-    "SRL",
-    "SUPPRESS",
-    "CVF",
-]
-MRDEF_COLS = ["CUI", "AUI", "ATUI", "SATUI", "SAB", "DEF", "SUPPRESS", "CVF"]
+from models.TableEncoder.text_encoder import KnowledgeGraphEncoderForTrainer
 
 
 def is_main_process() -> bool:
@@ -62,8 +32,6 @@ def rank0_print(*args, **kwargs) -> None:
 
 @dataclass
 class Args:
-    # Shared arguments
-    stage: str = "stage1"
     output_dir: str = "/data/zikun_workspace/checkpoints/pretraining/text_encoder"
     model_name_or_path: str = "/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT"
     max_length: int = 256
@@ -85,40 +53,14 @@ class Args:
     deepspeed: str = ""
     cache_only: bool = False
 
-    # Stage 1 arguments
-    umls_meta_dir: str = "/data/zikun_workspace/knowledge/UMLS/META"
-    pair_cache: str = ""
-    max_pairs: int = 0
-    max_names_per_cui: int = 2
-
-    # Stage 2 arguments
     concept_path: str = "/data/zikun_workspace/knowledge/CONCEPT.csv"
     concept_relationship_path: str = "/data/zikun_workspace/knowledge/CONCEPT_RELATIONSHIP.csv"
-    stage1_checkpoint: str = "/data/zikun_workspace/checkpoints/pretraining/text_encoder/epoch_100.pt"
     triple_cache: str = "/data/zikun_workspace/.cache/pretraining/triples_cache"
     kg_max_triples: Optional[int] = None
     kg_num_negatives: int = 4
     kg_margin: float = 1.0
     kg_distance_p: int = 2
     kg_relation_reg: float = 1e-4
-
-
-class UmlsPairDataset(Dataset):
-    def __init__(self, pair_path: str):
-        self.samples: List[Tuple[str, str]] = []
-        with open(pair_path, "r", encoding="utf-8") as f:
-            for line in f:
-                item = json.loads(line)
-                name = str(item.get("name", "")).strip()
-                definition = str(item.get("definition", "")).strip()
-                if name and definition:
-                    self.samples.append((name, definition))
-
-    def __len__(self) -> int:
-        return len(self.samples)
-
-    def __getitem__(self, idx: int) -> Tuple[str, str]:
-        return self.samples[idx]
 
 
 class ConceptRelationshipDataset(Dataset):
@@ -195,17 +137,6 @@ class ConceptRelationshipDataset(Dataset):
         }
 
 
-def iter_rrf_gz(paths: Iterable[Path], columns: List[str]) -> Iterable[Dict[str, str]]:
-    for path in sorted(paths):
-        with gzip.open(path, "rt", encoding="utf-8", errors="replace") as f:
-            reader = csv.reader(f, delimiter="|")
-            for row in reader:
-                if row and row[-1] == "":
-                    row = row[:-1]
-                if len(row) == len(columns):
-                    yield dict(zip(columns, row))
-
-
 def count_file_chunks(path: str, chunksize: int) -> int:
     lines = 0
     with open(path, "rb") as f:
@@ -213,78 +144,6 @@ def count_file_chunks(path: str, chunksize: int) -> int:
             lines += block.count(b"\n")
     data_lines = max(0, lines - 1)
     return max(1, (data_lines + chunksize - 1) // chunksize)
-
-
-def build_stage1_pairs(args: Args, pair_path: str) -> int:
-    meta_dir = Path(args.umls_meta_dir)
-    mrdef_path = meta_dir / "MRDEF.RRF.gz"
-    mrconso_paths = sorted(meta_dir.glob("MRCONSO.RRF.*.gz"))
-
-    definitions: Dict[str, Tuple[str, str]] = {}
-    for row in tqdm(
-        iter_rrf_gz([mrdef_path], MRDEF_COLS),
-        desc="Reading MRDEF",
-        unit="def",
-        disable=not is_main_process(),
-    ):
-        if row.get("SUPPRESS") != "N":
-            continue
-        cui = row.get("CUI", "")
-        aui = row.get("AUI", "")
-        definition = row.get("DEF", "").strip()
-        if cui and aui and definition:
-            definitions[aui] = (cui, definition)
-
-    os.makedirs(os.path.dirname(pair_path), exist_ok=True)
-    seen = set()
-    names_per_cui: Dict[str, int] = {}
-    written = 0
-
-    with open(pair_path, "w", encoding="utf-8") as out:
-        for row in tqdm(
-            iter_rrf_gz(mrconso_paths, MRCONSO_COLS),
-            desc="Joining MRCONSO",
-            unit="name",
-            disable=not is_main_process(),
-        ):
-            aui = row.get("AUI", "")
-            if aui not in definitions:
-                continue
-            if row.get("LAT") != "ENG" or row.get("SUPPRESS") != "N":
-                continue
-
-            cui, definition = definitions[aui]
-            current = names_per_cui.get(cui, 0)
-            if args.max_names_per_cui > 0 and current >= args.max_names_per_cui:
-                continue
-
-            name = row.get("STR", "").strip()
-            key = (cui, name, definition)
-            if not name or key in seen:
-                continue
-
-            out.write(
-                json.dumps(
-                    {
-                        "cui": cui,
-                        "aui": aui,
-                        "name": name,
-                        "definition": definition,
-                        "sab": row.get("SAB", ""),
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-            seen.add(key)
-            names_per_cui[cui] = current + 1
-            written += 1
-            if args.max_pairs > 0 and written >= args.max_pairs:
-                break
-
-    rank0_print(f"Stage 1 pair cache: {pair_path} ({written} pairs)")
-    return written
-
 
 def load_concept_names(concept_path: str) -> Dict[str, str]:
     concepts: Dict[str, str] = {}
@@ -312,7 +171,7 @@ def load_concept_names(concept_path: str) -> Dict[str, str]:
     return concepts
 
 
-def build_stage2_triples(
+def build_triples(
     args: Args, triple_cache: str, concepts: Dict[str, str]
 ) -> int:
     os.makedirs(triple_cache, exist_ok=True)
@@ -342,7 +201,7 @@ def build_stage2_triples(
     ) as relation_out:
         for chunk in tqdm(
             reader,
-            desc="Building stage 2 triples",
+            desc="Building triples",
             total=total_chunks,
             unit="chunk",
             disable=not is_main_process(),
@@ -394,41 +253,9 @@ def build_stage2_triples(
             indent=2,
         )
 
-    rank0_print(f"Stage 2 triple cache: {triple_cache} ({written} triples)")
-    rank0_print(f"Stage 2 relations: {len(relation2id)}")
+    rank0_print(f"Triple cache: {triple_cache} ({written} triples)")
+    rank0_print(f"Relations: {len(relation2id)}")
     return written
-
-
-def make_collate_fn(tokenizer, max_length: int):
-    def collate(batch: List[Tuple[str, str]]) -> Dict[str, torch.Tensor]:
-        names, definitions = zip(*batch)
-        name_tokens = tokenizer(
-            list(names),
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt",
-        )
-        definition_tokens = tokenizer(
-            list(definitions),
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt",
-        )
-        output = {
-            "name_input_ids": name_tokens["input_ids"],
-            "name_attention_mask": name_tokens["attention_mask"],
-            "definition_input_ids": definition_tokens["input_ids"],
-            "definition_attention_mask": definition_tokens["attention_mask"],
-        }
-        if "token_type_ids" in name_tokens:
-            output["name_token_type_ids"] = name_tokens["token_type_ids"]
-        if "token_type_ids" in definition_tokens:
-            output["definition_token_type_ids"] = definition_tokens["token_type_ids"]
-        return output
-
-    return collate
 
 
 def make_kg_collate_fn(tokenizer, max_length: int):
@@ -492,43 +319,6 @@ def make_kg_collate_fn(tokenizer, max_length: int):
     return collate
 
 
-def save_kdiag_checkpoint(model: nn.Module, tokenizer, args: Args, output_dir: str, name: str) -> None:
-    os.makedirs(output_dir, exist_ok=True)
-    path = os.path.join(output_dir, name)
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "model_name_or_path": args.model_name_or_path,
-            "args": asdict(args),
-        },
-        path,
-    )
-    tokenizer.save_pretrained(output_dir)
-    rank0_print(f"Saved checkpoint: {path}")
-
-
-def load_matching_checkpoint(model: nn.Module, checkpoint_path: str) -> None:
-    if not checkpoint_path or not os.path.exists(checkpoint_path):
-        rank0_print(
-            f"Stage 1 checkpoint not found, training from model init: {checkpoint_path}"
-        )
-        return
-
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    state_dict = checkpoint.get("state_dict", checkpoint)
-    model_state = model.state_dict()
-    matched_state = {
-        key: value
-        for key, value in state_dict.items()
-        if key in model_state and value.shape == model_state[key].shape
-    }
-    missing, unexpected = model.load_state_dict(matched_state, strict=False)
-    rank0_print(
-        f"Loaded checkpoint: {checkpoint_path} "
-        f"(matched={len(matched_state)}, missing={len(missing)}, unexpected={len(unexpected)})"
-    )
-
-
 def configure_wandb(args: Args) -> None:
     if args.report_to != "wandb":
         return
@@ -537,62 +327,7 @@ def configure_wandb(args: Args) -> None:
     if args.wandb_run_name:
         os.environ["WANDB_NAME"] = args.wandb_run_name
 
-
-def run_stage1(args: Args) -> None:
-    random.seed(args.seed)
-    set_seed(args.seed)
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    if not args.pair_cache:
-        raise ValueError("pair_cache must be set for stage1.")
-    pair_path = args.pair_cache
-    if not os.path.exists(pair_path):
-        build_stage1_pairs(args, pair_path)
-    if args.cache_only:
-        rank0_print(f"Stage 1 cache is ready: {pair_path}")
-        return
-
-    dataset = UmlsPairDataset(pair_path)
-    train_dataset = dataset
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-    collate_fn = make_collate_fn(tokenizer, args.max_length)
-    model = KnowledgeEncoderForTrainer(args.model_name_or_path, freeze_bert=args.freeze_bert)
-    configure_wandb(args)
-    training_args = TrainingArguments(
-        output_dir=args.output_dir,
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        warmup_ratio=args.warmup_ratio,
-        logging_steps=args.logging_steps,
-        save_steps=args.save_steps,
-        evaluation_strategy="no",
-        save_total_limit=args.save_total_limit,
-        dataloader_num_workers=args.num_workers,
-        remove_unused_columns=False,
-        prediction_loss_only=True,
-        bf16=args.bf16,
-        report_to=[] if args.report_to == "none" else [args.report_to],
-        run_name=args.wandb_run_name or None,
-        deepspeed=args.deepspeed or None,
-    )
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        data_collator=collate_fn,
-        tokenizer=tokenizer,
-    )
-    rank0_print(f"Stage 1 pairs: train={len(train_dataset)}")
-    rank0_print(f"Model: {args.model_name_or_path}")
-    trainer.train()
-    trainer.save_model(args.output_dir)
-    tokenizer.save_pretrained(args.output_dir)
-    save_kdiag_checkpoint(trainer.model, tokenizer, args, args.output_dir, "best.pt")
-
-
-def run_stage2(args: Args) -> None:
+def run_training(args: Args) -> None:
     random.seed(args.seed)
     set_seed(args.seed)
     os.makedirs(args.output_dir, exist_ok=True)
@@ -602,9 +337,9 @@ def run_stage2(args: Args) -> None:
     concepts = load_concept_names(args.concept_path)
     triple_cache = args.triple_cache
     if not os.path.exists(os.path.join(triple_cache, "metadata.json")):
-        build_stage2_triples(args, triple_cache, concepts)
+        build_triples(args, triple_cache, concepts)
     if args.cache_only:
-        rank0_print(f"Stage 2 cache is ready: {triple_cache}")
+        rank0_print(f"Triple cache is ready: {triple_cache}")
         return
 
     dataset = ConceptRelationshipDataset(
@@ -614,7 +349,7 @@ def run_stage2(args: Args) -> None:
         seed=args.seed,
     )
     if len(dataset) == 0:
-        raise ValueError("Stage 2 dataset is empty after filtering concept relationships.")
+        raise ValueError("Dataset is empty after filtering concept relationships.")
 
     train_dataset = dataset
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
@@ -627,9 +362,6 @@ def run_stage2(args: Args) -> None:
         relation_reg=args.kg_relation_reg,
         freeze_bert=args.freeze_bert,
     )
-    checkpoint_path = args.stage1_checkpoint
-    load_matching_checkpoint(model, checkpoint_path)
-
     configure_wandb(args)
     training_args = TrainingArguments(
         output_dir=args.output_dir,
@@ -659,7 +391,7 @@ def run_stage2(args: Args) -> None:
         processing_class=tokenizer,
     )
     rank0_print(
-        f"Stage 2 triples: train={len(train_dataset)}, "
+        f"Knowledge graph triples: train={len(train_dataset)}, "
         f"relations={len(dataset.relation2id)}"
     )
     rank0_print(f"Concept text: concept_name")
@@ -680,7 +412,7 @@ def run_stage2(args: Args) -> None:
 
 
 def parse_args() -> Args:
-    parser = argparse.ArgumentParser(description="K-Diag-style UMLS Knowledge Encoder")
+    parser = argparse.ArgumentParser(description="Knowledge graph encoder pretraining")
     for field_name, field_def in Args.__dataclass_fields__.items():
         default = field_def.default
         arg_type = type(default)
@@ -703,12 +435,7 @@ def parse_args() -> Args:
 
 def main() -> None:
     args = parse_args()
-    if args.stage == "stage1":
-        run_stage1(args)
-    elif args.stage == "stage2":
-        run_stage2(args)
-    else:
-        rank0_print(f"Unknown stage: {args.stage}. Use stage1 or stage2.")
+    run_training(args)
 
 
 if __name__ == "__main__":

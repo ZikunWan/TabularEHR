@@ -25,6 +25,15 @@ TASK_INFO = {
             "tacrolimus concentration during {stage_window}."
         ),
     },
+    "death_survival": {
+        "metric": "survival",
+        "task_type": "time_to_event",
+        "instruction_template": (
+            "Based on the patient's clinical history through postoperative day "
+            "{prediction_day}, estimate the daily hazard of death during "
+            "{stage_window}."
+        ),
+    },
 }
 
 ALL_METRICS = sorted(

@@ -1,15 +1,13 @@
 #!/bin/bash
 set -e
 
-cd "$(dirname "$0")/../../test/Classifier"
-
-CUDA_VISIBLE_DEVICES=0 python test_renji_survival.py \
+CUDA_VISIBLE_DEVICES=0 python test/classification/test_renji_survival.py \
     --data_dir "/data/EHR_data_public/Renji" \
     --embedding_cache "/data/zikun_workspace/.cache/embeddings/renji/text_embeddings_stage2.pt" \
     --checkpoint_dir "/data/zikun_workspace/checkpoints/renji/tacrolimus_survival" \
-    --patient_subset_path "/data/zikun_workspace/code/data/patients.json" \
+    --patient_subset_path "data/patients.json" \
     --split test \
-    --type_vocab_file "/data/zikun_workspace/code/data/type_vocab.json" \
+    --type_vocab_file "data/type_vocab.json" \
     --query_encoder knowledge \
     --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/renji_survival_task_query_knowledge_embeddings.pt" \
     --knowledge_encoder_path "/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2/best.pt" \

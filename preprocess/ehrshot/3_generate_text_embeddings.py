@@ -44,7 +44,6 @@ def init_harvest_worker(data_dir, index_path):
         root_dir=data_dir,
         sample_info_path=index_path,
         lazy_mode=True,
-        table_mode="table_only",
     )
 
 
@@ -100,7 +99,6 @@ def harvest_unique_texts(data_dir, index_file, harvest_checkpoint, num_workers, 
         root_dir=data_dir,
         sample_info_path=index_file,
         lazy_mode=True,
-        table_mode="table_only",
     )
 
     unique_slices = {}

@@ -1,9 +1,7 @@
 set -e
 
-cd /data/zikun_workspace/code/train/Classifier
-
-deepspeed --include localhost:4,5,6,7 train_mimic_iv_cdm_classifier.py \
-    --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
+deepspeed --include localhost:4,5,6,7 train/classification/train_mimic_iv_cdm_classifier.py \
+    --deepspeed "ds_config_zero2.json" \
     --embedding_cache "/data/zikun_workspace/.cache/embeddings/mimic_iv_cdm/text_embeddings_stage2.pt" \
     --output_dir "/data/zikun_workspace/checkpoints/mimic_iv_cdm/main_diagnosis/phenotype_triplet_learning" \
     --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/phenotype_triplet_learning" \

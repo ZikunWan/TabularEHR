@@ -1,7 +1,6 @@
 #!/bin/bash
 export MIMIC_SKIP_SAMPLE_CACHE_CHECK=1
 NUM_GPUS=$(nvidia-smi -L | wc -l)
-cd train/Classifier
 TASK_INDEX_ROOT="/data/zikun_workspace/mimic-iv-3.1_tabular/task_index"
 
 TASKS=(
@@ -33,8 +32,8 @@ for TASK in "${TASKS[@]}"; do
     TRAIN_INFO_PATH="${TASK_INDEX_ROOT}/train/${TASK}.csv"
     VAL_INFO_PATH="${TASK_INDEX_ROOT}/val/${TASK}.csv"
     
-    deepspeed --num_gpus=$NUM_GPUS train_ehr_bench_classifier.py \
-        --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
+    deepspeed --num_gpus=$NUM_GPUS train/classification/train_ehr_bench_classifier.py \
+        --deepspeed "ds_config_zero2.json" \
         --output_dir "/data/zikun_workspace/checkpoints/ehr_bench/${TASK}/table_encoder/after_phenotype_query_contrastive_learning" \
         --run_name "ehr_bench_${TASK}_llm_query_next_token" \
         --pretrained_path "/data/zikun_workspace/checkpoints/pretraining/phenotype_query_contrastive_learning" \

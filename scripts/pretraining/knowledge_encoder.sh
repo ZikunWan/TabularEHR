@@ -1,6 +1,5 @@
 if [ "$CACHE_ONLY" = "true" ]; then
     python ./pretraining/knowledge_encoder.py \
-        --stage "stage2" \
         --concept_path "/data/zikun_workspace/knowledge/CONCEPT.csv" \
         --concept_relationship_path "/data/zikun_workspace/knowledge/CONCEPT_RELATIONSHIP.csv" \
         --triple_cache "/data/zikun_workspace/.cache/pretraining/triples_cache" \
@@ -10,9 +9,7 @@ if [ "$CACHE_ONLY" = "true" ]; then
 else
     deepspeed --num_gpus=8 ./pretraining/knowledge_encoder.py \
         --deepspeed "./ds_config_zero2.json" \
-        --stage "stage2" \
         --model_name_or_path "/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT" \
-        --stage1_checkpoint "/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/epoch_100.pt" \
         --concept_path "/data/zikun_workspace/knowledge/CONCEPT.csv" \
         --concept_relationship_path "/data/zikun_workspace/knowledge/CONCEPT_RELATIONSHIP.csv" \
         --triple_cache "/data/zikun_workspace/.cache/pretraining/triples_cache" \

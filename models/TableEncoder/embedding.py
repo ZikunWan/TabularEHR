@@ -82,8 +82,7 @@ class LongTableEmbedding(nn.Module):
                 times: torch.Tensor,
                 numeric_values: torch.Tensor,
                 numeric_mask: torch.Tensor,
-                type_ids: Optional[torch.Tensor] = None,
-                use_2d_attention: bool = False):
+                type_ids: Optional[torch.Tensor] = None):
         """
         Forward pass with pre-computed embeddings.
         
@@ -131,9 +130,5 @@ class LongTableEmbedding(nn.Module):
         # 5. Add Time Encoding 
         time_emb =  self.time_enc(times)
         time_mask = (times != 0).unsqueeze(-1).to(time_emb.dtype)
-        
-        if use_2d_attention:
-            return item_proj, val_proj, unit_proj, type_emb, time_emb, time_mask
-        else:
-            x = event_emb + time_emb * time_mask
-            return x
+        x = event_emb + time_emb * time_mask
+        return x

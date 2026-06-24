@@ -57,7 +57,6 @@ def init_harvest_worker(root_dir, processed_dir, sample_info_path):
         task_name="all",
         lazy_mode=True,
         shuffle=False,
-        table_mode="table_only",
     )
 
 
@@ -114,7 +113,6 @@ def harvest_unique_texts(root_dir, processed_dir, splits, harvest_checkpoint, nu
             task_name="all",
             lazy_mode=True,
             shuffle=False,
-            table_mode="table_only",
         )
 
         unique_slices = {}

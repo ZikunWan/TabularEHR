@@ -27,6 +27,16 @@ ICD_TO_CCS_MAPPING = {}
 INCLUDE_FIRST_ADMISSION_PRETRAINING = False
 
 
+def normalize_binary_target(target):
+    if isinstance(target, str):
+        target_lower = target.strip().strip('"').strip("'").lower()
+        if target_lower == "yes":
+            return 1
+        if target_lower == "no":
+            return 0
+    return target
+
+
 def _infer_root_dir(args):
     if getattr(args, "root_dir", None):
         return args.root_dir
@@ -948,7 +958,7 @@ if __name__ == "__main__":
                 mininterval=1.0,
             ):
                 sample["target_weight"] = get_sample_weight(sample, task_target_info)
-                sample["target"] = json.dumps(sample["target"])
+                sample["target"] = json.dumps(normalize_binary_target(sample["target"]))
             
             df = pd.DataFrame(sample_list)
             df.to_csv(os.path.join(args.output_path, f"{event}.csv"), index=False)

@@ -393,6 +393,96 @@ TASK_INFO = {
         "task_type": "binary_classification",
         "instruction": "Given the sequence of events that have occurred in a hospital, please predict whether the patient will be admitted to the ICU again during this hospitalization",
     },
+
+    "Time_to_Inpatient_Mortality_after_ED": {
+        "target_key": None,
+        "event": "edstays",
+        "metric": "survival",
+        "bid_event": [],
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of events available after the emergency department visit, estimate the time to inpatient mortality.",
+    },
+
+    "Time_to_ICU_Transfer_after_ED": {
+        "target_key": None,
+        "event": "edstays",
+        "metric": "survival",
+        "bid_event": [],
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of events available after the emergency department visit, estimate the time to ICU transfer.",
+    },
+
+    "Time_to_ED_Reattendance": {
+        "target_key": None,
+        "event": "edstays",
+        "metric": "survival",
+        "bid_event": [],
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of events available after the emergency department visit, estimate the time to the next emergency department visit.",
+    },
+
+    "Time_to_ED_Critical_Outcome": {
+        "target_key": None,
+        "event": "edstays",
+        "metric": "survival",
+        "bid_event": [],
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of events available after the emergency department visit, estimate the time to a critical outcome, defined as inpatient mortality or ICU transfer.",
+    },
+
+    "Time_to_Hospital_Readmission": {
+        "target_key": None,
+        "event": "discharge",
+        "metric": "survival",
+        "bid_event": [],
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of events available at hospital discharge, estimate the time to hospital readmission.",
+    },
+
+    "Time_to_Inpatient_Mortality": {
+        "target_key": None,
+        "event": "admissions",
+        "metric": "survival",
+        "bid_event": [],
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of hospital events, estimate the time to inpatient mortality.",
+    },
+
+    "Time_to_Hospital_Discharge": {
+        "target_key": None,
+        "event": "admissions",
+        "metric": "survival",
+        "bid_event": [],
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of hospital events, estimate the time to hospital discharge.",
+    },
+
+    "Time_to_ICU_Mortality": {
+        "target_key": None,
+        "event": "icustays",
+        "metric": "survival",
+        "bid_event": [],
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of ICU events, estimate the time to ICU or in-hospital mortality.",
+    },
+
+    "Time_to_ICU_Discharge": {
+        "target_key": None,
+        "event": "icustays",
+        "metric": "survival",
+        "bid_event": [],
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of ICU events, estimate the time to ICU discharge.",
+    },
+
+    "Time_to_ICU_Readmission": {
+        "target_key": None,
+        "event": "icustays",
+        "metric": "survival",
+        "bid_event": [],
+        "task_type": "time_to_event",
+        "instruction": "Given the sequence of ICU events, estimate the time to ICU readmission.",
+    },
     
     # Pretraining
     "contrastive_learning": {

@@ -11,62 +11,46 @@ MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --num_gpus=8 ./pretraining/pretrain.py
     --table_text_embedding "/data/zikun_workspace/.cache/embeddings/mimic_iv/text_embeddings_stage2.pt" \
     --eicu_table_text_embedding "/data/zikun_workspace/.cache/embeddings/eicu/text_embeddings_stage2.pt" \
     --ehrshot_table_text_embedding "/data/zikun_workspace/.cache/embeddings/ehrshot/text_embeddings_stage2.pt" \
-    --ntp_train_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv" \
-    --ntp_val_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val/next_token_prediction.csv" \
-    --eicu_ntp_train_info_path "/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_train.json" \
-    --eicu_ntp_val_info_path "/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_val.json" \
-    --ehrshot_ntp_train_info_path "/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_train.csv" \
-    --ehrshot_ntp_val_info_path "/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_val.csv" \
-    --task_train_sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train" \
-    --task_val_sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val" \
-    --eicu_task_train_sample_info_path "/data/zikun_workspace/eicu-crd/processed/sample_info_train.json" \
-    --eicu_task_val_sample_info_path "/data/zikun_workspace/eicu-crd/processed/sample_info_val.json" \
-    --ehrshot_task_train_sample_info_path "/data/EHR_data_public/EHRSHOT/index/ehrshot_train.csv" \
-    --ehrshot_task_val_sample_info_path "/data/EHR_data_public/EHRSHOT/index/ehrshot_val.csv" \
     --phenotype_spec_path "/data/zikun_workspace/.cache/phenotype_metric_learning/phenotype_query_specs.json" \
-    --phenotype_preprocessed_input_dir "/data/zikun_workspace/.cache/phenotype_metric_learning/inputs" \
+    --unified_preprocessed_input_dir "/data/zikun_workspace/.cache/unified_pretraining/inputs" \
     --task_query_embedding_cache "/data/zikun_workspace/.cache/embeddings/pretrain/task_query_knowledge_embeddings.pt" \
     --phenotype_query_embedding_cache "/data/zikun_workspace/.cache/embeddings/pretrain/phenotype_query_knowledge_embeddings.pt" \
     --knowledge_encoder_path "/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2/best.pt" \
     --knowledge_encoder_base_model_path "/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT" \
-    --query_max_length 128 \
+    --query_max_length 64 \
     --query_embedding_batch_size 256 \
-    --max_table_len 2048 \
+    --max_table_len 4096 \
     --min_table_rows 2 \
-    --max_ntp_train_samples 320000 \
-    --max_task_train_samples 320000 \
-    --max_metric_train_samples 320000 \
-    --max_ntp_eval_samples 4096 \
-    --max_task_eval_samples 4096 \
-    --max_metric_eval_samples 4096 \
-    --per_device_train_batch_size 8 \
-    --per_device_eval_batch_size 8 \
-    --gradient_accumulation_steps 8 \
+    --per_device_train_batch_size 32 \
+    --per_device_eval_batch_size 32 \
+    --gradient_accumulation_steps 1 \
     --dataloader_num_workers 4 \
     --learning_rate 1e-5 \
     --lr_scheduler_type "cosine" \
     --min_lr_ratio 0.1 \
-    --warmup_steps 100 \
+    --warmup_steps 1000 \
     --weight_decay 0.01 \
     --ntp_loss_weight 1.0 \
     --task_loss_weight 0.25 \
     --metric_loss_weight 1.0 \
+    --ntp_time_loss_weight 0.1 \
     --huber_delta 1.0 \
     --projection_loss_weight 1.0 \
     --transe_loss_weight 0.0 \
     --relation_l2_weight 0.0 \
     --min_pair_delta 0.0 \
-    --num_train_epochs 5 \
+    --num_train_epochs 1 \
     --logging_steps 10 \
     --save_steps 200 \
-    --eval_strategy "steps" \
+    --eval_strategy "no" \
     --eval_steps 200 \
     --save_total_limit 1 \
     --metric_for_best_model "eval_loss" \
     --greater_is_better false \
-    --early_stopping_patience 10 \
+    --early_stopping_patience 20 \
     --bf16 true \
     --report_to "wandb" \
     --wandb_project "Joint_Pretraining" \
-    --run_name "joint_ntp_task_metric" \
-    --output_dir "/data/zikun_workspace/checkpoints/pretraining/joint_pretrain"
+    --run_name "unified_task_anchored_joint_pretrain" \
+    --resume_from_checkpoint "/data/zikun_workspace/checkpoints/pretraining/joint/checkpoint-8400" \
+    --output_dir "/data/zikun_workspace/checkpoints/pretraining/joint"

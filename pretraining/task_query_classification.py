@@ -20,11 +20,11 @@ from dataset.eicu.task_info import get_task_info as get_eicu_task_info
 from dataset.mimic.mimic_dataset import MIMICIV
 from dataset.mimic.task_info import get_task_info as get_mimic_task_info
 from models.TableEncoder.config import LongTableEncoder1DConfig
-from models.TableEncoder.query_classifier import TaskQueryClassificationModel
+from models.query_classifier import TaskQueryClassificationModel
 from utils.collate import build_table_token_tensors
 from utils.load_embedding import build_text_to_idx
 from utils.metrics import compute_classification_metrics
-from utils.weight_loader import load_model_weights
+from utils.weight_loader import load_encoder_weights
 
 
 RISK_PREDICTION_TASKS = [
@@ -421,7 +421,6 @@ def build_mimic_datasets(root_dir: str, sample_info_paths):
                 sample_info_path=sample_info_path,
                 lazy_mode=True,
                 shuffle=False,
-                table_mode="table_only",
                 max_samples=None,
                 use_table_length_cache=False,
             ),
@@ -441,7 +440,6 @@ def build_eicu_datasets(root_dir: str, processed_dir: str, sample_info, task_nam
                 task_name=task_name,
                 lazy_mode=True,
                 shuffle=False,
-                table_mode="table_only",
             ),
         )
         for task_name in task_names
@@ -457,7 +455,6 @@ def build_ehrshot_datasets(root_dir: str, sample_info, task_names):
                 sample_info=sample_info,
                 task_name=task_name,
                 lazy_mode=True,
-                table_mode="table_only",
             ),
         )
         for task_name in task_names
@@ -548,7 +545,7 @@ def main():
         embedding_matrix=embedding_matrix,
         query_dim=query_dim,
     )
-    model = load_model_weights(model, data_args.pretrained_path)
+    model = load_encoder_weights(model, data_args.pretrained_path)
 
     collator = TaskQueryCollator(
         text_to_idx=text_to_idx,

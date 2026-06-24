@@ -2,8 +2,6 @@
 set -e
 
 NUM_GPUS=$(nvidia-smi -L | wc -l)
-cd train/Classifier
-
 TASKS=(
     "mortality"
     "long_term_mortality"
@@ -19,8 +17,8 @@ TASKS=(
 )
 
 for TASK in "${TASKS[@]}"; do
-    deepspeed --num_gpus=$NUM_GPUS train_eicu_classifier.py \
-    --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
+    deepspeed --num_gpus=$NUM_GPUS train/classification/train_eicu_classifier.py \
+    --deepspeed "ds_config_zero2.json" \
     --output_dir "/data/zikun_workspace/checkpoints/eicu/phenotype_query_contrastive_learning/${TASK}" \
     --run_name "eicu_${TASK}_phenotype_query_contrastive_learning" \
     --task_name "$TASK" \

@@ -1,9 +1,7 @@
 #!/bin/bash
 NUM_GPUS=$(nvidia-smi -L | wc -l)
-cd train/Classifier
-
-deepspeed --num_gpus=$NUM_GPUS train_renji_classifier.py \
-    --deepspeed "/data/zikun_workspace/code/ds_config_zero2.json" \
+deepspeed --num_gpus=$NUM_GPUS train/classification/train_renji_classifier.py \
+    --deepspeed "ds_config_zero2.json" \
     --output_dir "/data/zikun_workspace/checkpoints/renji/joint_pretrain" \
     --run_name "renji_joint_pretrain" \
     --max_table_len 4096 \
