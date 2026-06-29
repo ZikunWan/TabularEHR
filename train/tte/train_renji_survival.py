@@ -87,12 +87,8 @@ class DataArguments:
     )
     type_vocab_file: str = field(default="data/type_vocab.json")
     query_embedding_cache: str = field(
-        default="/data/zikun_workspace/.cache/embeddings/query_classifier/"
+        default="/data/zikun_workspace/.cache/embeddings/query_candidate/"
         "renji_survival_task_query_knowledge_embeddings.pt"
-    )
-    query_encoder: str = field(default="knowledge")
-    query_llm_model_path: str = field(
-        default="/data/model_weights_public/BlueZeros/EHR-R1-1.7B"
     )
     knowledge_encoder_path: str = field(
         default="/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/"
@@ -246,9 +242,7 @@ def main():
     query_embeddings_by_text, query_dim = build_task_query_embeddings(
         query_texts=query_texts,
         cache_path=data_args.query_embedding_cache,
-        query_encoder=data_args.query_encoder,
         max_length=data_args.query_max_length,
-        query_llm_model_path=data_args.query_llm_model_path,
         knowledge_encoder_path=data_args.knowledge_encoder_path,
         knowledge_encoder_base_model_path=data_args.knowledge_encoder_base_model_path,
     )

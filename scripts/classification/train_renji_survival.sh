@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
+source "$(dirname "$0")/../common/silent_info.sh"
 
-NUM_GPUS=$(nvidia-smi -L | wc -l)
-deepspeed --num_gpus="$NUM_GPUS" train/tte/train_renji_survival.py \
+deepspeed --include localhost:4,5,6,7 train/tte/train_renji_survival.py \
     --deepspeed "ds_config_zero2.json" \
     --output_dir "/data/zikun_workspace/checkpoints/renji/tacrolimus_survival" \
     --run_name "renji_tacrolimus_abnormal_survival" \
@@ -27,8 +27,7 @@ deepspeed --num_gpus="$NUM_GPUS" train/tte/train_renji_survival.py \
     --bf16 true \
     --dataloader_num_workers 32 \
     --report_to wandb \
-    --query_encoder knowledge \
-    --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_classifier/renji_survival_task_query_knowledge_embeddings.pt" \
+    --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_candidate/renji_survival_task_query_knowledge_embeddings.pt" \
     --knowledge_encoder_path "/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2/best.pt" \
     --knowledge_encoder_base_model_path "/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT" \
     --query_max_length 128 \

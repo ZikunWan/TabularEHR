@@ -17,6 +17,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from dataset.ehrshot.task_info import get_task_info
+from utils.measurement_cache import get_or_build_measurement_table, stable_cache_key
 
 ADDITIONAL_INFO = {
     "Body height": {
@@ -269,6 +270,7 @@ class EHRSHOTDataset(Dataset):
         self.use_table_length_cache = use_table_length_cache
         self.local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
         self.table_length_cache_dir = os.path.join(self.root_dir, "cache", "table_length")
+        self.measurement_cache_dir = os.path.join(self.root_dir, "cache", "measurement_table")
         os.makedirs(self.table_length_cache_dir, exist_ok=True)
         sample_info_name = os.path.basename(self.sample_info_path) if self.sample_info_path else "sample_info_memory.csv"
         self.table_length_cache_file = os.path.join(self.table_length_cache_dir, f"{sample_info_name}.table_length.json")
@@ -561,7 +563,7 @@ class EHRSHOTDataset(Dataset):
     def _process_item(self, index):
         sample = self.sample_info[index]
         if sample.get("task") == "pretraining_context":
-            measurement_df = self.structed_EHR_input_process(sample)
+            measurement_df = self._cached_measurement_table(sample)
             output_sample = {
                 "idx": index,
                 "input": "",
@@ -574,7 +576,7 @@ class EHRSHOTDataset(Dataset):
             return output_sample
 
         task_name = sample['task_name']
-        measurement_df = self.structed_EHR_input_process(sample)
+        measurement_df = self._cached_measurement_table(sample)
 
         task_info = {}
         task_info["task"] = task_name
@@ -602,6 +604,21 @@ class EHRSHOTDataset(Dataset):
         }
 
         return output_sample
+
+    def _cached_measurement_table(self, sample):
+        cache_key = stable_cache_key(
+            sample.get("patient_id"),
+            sample.get("task_name"),
+            sample.get("period_begin"),
+            sample.get("period_end"),
+            sample.get("visit_start"),
+            sample.get("visit_end"),
+        )
+        return get_or_build_measurement_table(
+            self.measurement_cache_dir,
+            cache_key,
+            lambda: self.structed_EHR_input_process(sample),
+        )
 
     def __getitem__(self, index):
         # Eager mode: return cached preprocessed sample.

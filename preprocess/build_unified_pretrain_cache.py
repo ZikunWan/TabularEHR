@@ -25,10 +25,11 @@ from pretraining import task_query_classification as tqc
 from utils.collate import build_table_token_tensors
 
 
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 TASK_TYPE_BINARY = 0
 TASK_TYPE_TTE = 1
 TASK_TYPE_MULTICLASS = 2
+PRETRAINING_CONTEXT_TASK = "__pretraining_context__"
 MAX_TTE_BINS = 365
 _WORKER_DATASET = None
 _WORKER_SOURCE_REGISTRY = None
@@ -99,6 +100,25 @@ class CacheBuildArguments:
     ehrshot_task_val_sample_info_path: str = field(
         default="/data/EHR_data_public/EHRSHOT/index/ehrshot_val.csv"
     )
+    pretraining_sample_info_path: str = field(
+        default="/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv"
+    )
+    pretraining_val_sample_info_path: str = field(
+        default="/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val/next_token_prediction.csv"
+    )
+    eicu_pretraining_sample_info_path: str = field(
+        default="/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_train.json"
+    )
+    eicu_pretraining_val_sample_info_path: str = field(
+        default="/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_val.json"
+    )
+    ehrshot_pretraining_sample_info_path: str = field(
+        default="/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_train.csv"
+    )
+    ehrshot_pretraining_val_sample_info_path: str = field(
+        default="/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_val.csv"
+    )
+    include_pretraining_context: bool = field(default=True)
     tte_index_dir: str = field(default="/data/zikun_workspace/tte_task_index")
     phenotype_spec_path: str = field(
         default="/data/zikun_workspace/.cache/phenotype_metric_learning/"
@@ -112,10 +132,10 @@ class CacheBuildArguments:
     num_workers: int = field(default=1)
     worker_chunksize: int = field(default=8)
     worker_torch_threads: int = field(default=1)
-    worker_max_tasks_per_child: int = field(default=1)
+    worker_max_tasks_per_child: int = field(default=0)
     worker_progress_update_interval: int = field(default=128)
     supervision_write_buffer_size: int = field(default=8192)
-    run_id: str = field(default="unified_pretrain_cache_v4")
+    run_id: str = field(default="unified_pretrain_cache_v5")
     resume: bool = field(default=True)
 
 
@@ -238,11 +258,85 @@ def build_tte_dataset(args: CacheBuildArguments, split: str):
     return TteTaskQueryDataset(parts)
 
 
+def _split_path(train_path: str, val_path: str, split: str) -> str:
+    return train_path if split == "train" else val_path
+
+
+def _existing_path(path: str) -> bool:
+    return bool(path) and os.path.exists(path) and os.path.getsize(path) > 0
+
+
+def build_pretraining_context_dataset(args: CacheBuildArguments, split: str):
+    if not args.include_pretraining_context:
+        return PretrainingContextDataset([])
+
+    parts = []
+    if "mimic_iv" in args.dataset:
+        path = _split_path(
+            args.pretraining_sample_info_path,
+            args.pretraining_val_sample_info_path,
+            split,
+        )
+        if _existing_path(path):
+            parts.extend(tqc.build_mimic_datasets(args.root_dir, [path]))
+        else:
+            print(f"{split}: skip missing MIMIC-IV pretraining context index: {path}")
+
+    if "eicu" in args.dataset:
+        path = _split_path(
+            args.eicu_pretraining_sample_info_path,
+            args.eicu_pretraining_val_sample_info_path,
+            split,
+        )
+        if _existing_path(path):
+            parts.append(
+                (
+                    "eicu",
+                    tqc.EICUDataset(
+                        root_dir=args.eicu_root_dir,
+                        processed_dir=args.eicu_processed_dir,
+                        sample_info=tqc.load_json_records(path),
+                        task_name=None,
+                        lazy_mode=True,
+                        shuffle=False,
+                    ),
+                )
+            )
+        else:
+            print(f"{split}: skip missing eICU pretraining context index: {path}")
+
+    if "ehrshot" in args.dataset:
+        path = _split_path(
+            args.ehrshot_pretraining_sample_info_path,
+            args.ehrshot_pretraining_val_sample_info_path,
+            split,
+        )
+        if _existing_path(path):
+            parts.append(
+                (
+                    "ehrshot",
+                    tqc.EHRSHOTDataset(
+                        root_dir=args.ehrshot_root_dir,
+                        sample_info=tqc.load_csv_records(path),
+                        task_name=None,
+                        lazy_mode=True,
+                    ),
+                )
+            )
+        else:
+            print(f"{split}: skip missing EHRSHOT pretraining context index: {path}")
+
+    return PretrainingContextDataset(parts)
+
+
 def build_mixed_task_dataset(args: CacheBuildArguments, split: str):
     datasets = [build_task_dataset(args, split)]
     tte_dataset = build_tte_dataset(args, split)
     if len(tte_dataset) > 0:
         datasets.append(tte_dataset)
+    context_dataset = build_pretraining_context_dataset(args, split)
+    if len(context_dataset) > 0:
+        datasets.append(context_dataset)
     return MixedTaskDataset(datasets)
 
 
@@ -334,6 +428,38 @@ class TteTaskQueryDataset(torch.utils.data.Dataset):
         return sorted(task for task in tasks if task)
 
 
+class PretrainingContextDataset(torch.utils.data.Dataset):
+    def __init__(self, datasets):
+        self.datasets = datasets
+        self.index = []
+        for dataset_idx, (_, dataset) in enumerate(self.datasets):
+            for sample_idx in range(len(dataset)):
+                self.index.append((dataset_idx, sample_idx))
+
+    def __len__(self):
+        return len(self.index)
+
+    def __getitem__(self, idx):
+        dataset_idx, sample_idx = self.index[idx]
+        _, dataset = self.datasets[dataset_idx]
+        sample = dataset[sample_idx]
+        return {
+            "table": sample["measurement_table"],
+            "task": PRETRAINING_CONTEXT_TASK,
+            "content_task": PRETRAINING_CONTEXT_TASK,
+            "task_type_id": TASK_TYPE_BINARY,
+            "label": 0.0,
+            "task_loss_mask": 0.0,
+            "survival_labels": np.zeros((3, MAX_TTE_BINS), dtype=np.float32),
+        }
+
+    def task_names(self):
+        return [PRETRAINING_CONTEXT_TASK]
+
+    def content_task_names(self):
+        return [PRETRAINING_CONTEXT_TASK]
+
+
 class MixedTaskDataset(torch.utils.data.Dataset):
     def __init__(self, datasets):
         self.datasets = [dataset for dataset in datasets if len(dataset) > 0]
@@ -406,6 +532,48 @@ def table_input_key(dataset_name: str, dataset, sample_info, task_name: str) -> 
             ]
         )
     return json_key([dataset_name, sample_info])
+
+
+def pretraining_context_input_key(dataset_name: str, sample_info) -> str:
+    if sample_info.get("sample_id") is not None:
+        return json_key([dataset_name, "pretraining_context", sample_info["sample_id"]])
+    if dataset_name == "mimic_iv":
+        return json_key(
+            [
+                dataset_name,
+                "pretraining_context",
+                sample_info.get("subject_id", ""),
+                sample_info.get("hadm_id", sample_info.get("stay_id", "")),
+                sample_info.get("context_begin", ""),
+                sample_info.get("context_end", ""),
+            ]
+        )
+    if dataset_name == "eicu":
+        return json_key(
+            [
+                dataset_name,
+                "pretraining_context",
+                sample_info.get("patient_id", ""),
+                sample_info.get("icustay_id", sample_info.get("patientunitstayid", "")),
+                sample_info.get("context_begin", ""),
+                sample_info.get("context_end", ""),
+                sample_info.get("obs_hours", ""),
+            ]
+        )
+    if dataset_name == "ehrshot":
+        return json_key(
+            [
+                dataset_name,
+                "pretraining_context",
+                sample_info.get("patient_id", ""),
+                sample_info.get("period_begin", ""),
+                sample_info.get("period_end", ""),
+                sample_info.get("visit_row_index", ""),
+                sample_info.get("visit_start", ""),
+                sample_info.get("visit_end", ""),
+            ]
+        )
+    return json_key([dataset_name, "pretraining_context", sample_info])
 
 
 def register_source(source_registry, source_to_id, dataset_name: str, dataset) -> int:
@@ -487,6 +655,25 @@ def tte_supervision_record(tte_dataset, idx, source_registry, source_to_id):
     }
 
 
+def pretraining_context_supervision_record(context_dataset, idx, source_registry, source_to_id):
+    dataset_idx, sample_idx = context_dataset.index[idx]
+    dataset_name, dataset = context_dataset.datasets[dataset_idx]
+    sample_info = dataset.sample_info[sample_idx]
+    source_id = register_source(source_registry, source_to_id, dataset_name, dataset)
+    return {
+        "source_id": source_id,
+        "sample_idx": int(sample_idx),
+        "input_key": pretraining_context_input_key(dataset_name, sample_info),
+        "task": PRETRAINING_CONTEXT_TASK,
+        "content_task": PRETRAINING_CONTEXT_TASK,
+        "task_type_id": TASK_TYPE_BINARY,
+        "label": 0.0,
+        "task_loss_mask": 0.0,
+        "survival_target": None,
+        "tte_metadata": None,
+    }
+
+
 def build_unified_records(mixed_dataset, split_dir: str, run_id: str):
     source_registry = []
     source_to_id = {}
@@ -509,6 +696,10 @@ def build_unified_records(mixed_dataset, split_dir: str, run_id: str):
             dataset = mixed_dataset.datasets[outer_dataset_idx]
             if isinstance(dataset, TteTaskQueryDataset):
                 record = tte_supervision_record(
+                    dataset, sample_idx, source_registry, source_to_id
+                )
+            elif isinstance(dataset, PretrainingContextDataset):
+                record = pretraining_context_supervision_record(
                     dataset, sample_idx, source_registry, source_to_id
                 )
             else:
@@ -1094,6 +1285,7 @@ def write_supervision_index(
     content_task_ids_file = open(os.path.join(work_dir, "content_task_ids.bin"), "wb")
     task_type_ids_file = open(os.path.join(work_dir, "task_type_ids.bin"), "wb")
     labels_file = open(os.path.join(work_dir, "labels.bin"), "wb")
+    task_loss_masks_file = open(os.path.join(work_dir, "task_loss_masks.bin"), "wb")
     survival_labels_file = open(os.path.join(work_dir, "survival_labels.bin"), "wb")
     write_buffer_size = max(1, int(write_buffer_size))
     zero_survival_target = np.zeros((3, MAX_TTE_BINS), dtype=np.float32)
@@ -1103,6 +1295,7 @@ def write_supervision_index(
     content_task_ids_buffer = []
     task_type_ids_buffer = []
     labels_buffer = []
+    task_loss_masks_buffer = []
     survival_labels_buffer = []
 
     def flush_buffers():
@@ -1114,6 +1307,7 @@ def write_supervision_index(
         np.asarray(content_task_ids_buffer, dtype=np.int32).tofile(content_task_ids_file)
         np.asarray(task_type_ids_buffer, dtype=np.uint8).tofile(task_type_ids_file)
         np.asarray(labels_buffer, dtype=np.float32).tofile(labels_file)
+        np.asarray(task_loss_masks_buffer, dtype=np.float32).tofile(task_loss_masks_file)
         np.asarray(survival_labels_buffer, dtype=np.float32).reshape(
             -1, 3, MAX_TTE_BINS
         ).tofile(survival_labels_file)
@@ -1123,6 +1317,7 @@ def write_supervision_index(
         content_task_ids_buffer.clear()
         task_type_ids_buffer.clear()
         labels_buffer.clear()
+        task_loss_masks_buffer.clear()
         survival_labels_buffer.clear()
 
     tte_metadata_file = open(
@@ -1152,6 +1347,7 @@ def write_supervision_index(
                 content_task_ids_buffer.append(content_task_to_id[str(record["content_task"])])
                 task_type_ids_buffer.append(task_type_id)
                 labels_buffer.append(float(record["label"]))
+                task_loss_masks_buffer.append(float(record.get("task_loss_mask", 1.0)))
                 survival_target = record.get("survival_target")
                 if survival_target is None:
                     if task_type_id == TASK_TYPE_TTE:
@@ -1182,6 +1378,7 @@ def write_supervision_index(
             content_task_ids_file,
             task_type_ids_file,
             labels_file,
+            task_loss_masks_file,
             survival_labels_file,
             tte_metadata_file,
         ):

@@ -20,7 +20,7 @@ from dataset.eicu.task_info import get_task_info as get_eicu_task_info
 from dataset.mimic.mimic_dataset import MIMICIV
 from dataset.mimic.task_info import get_task_info as get_mimic_task_info
 from models.TableEncoder.config import LongTableEncoder1DConfig
-from models.query_classifier import TaskQueryClassificationModel
+from models.query_candidate_decoder import TaskQueryCandidateDecoderModel
 from utils.collate import build_table_token_tensors
 from utils.load_embedding import build_text_to_idx
 from utils.metrics import compute_classification_metrics
@@ -194,7 +194,14 @@ def build_query_embeddings(
         return cache["embeddings"], int(cache["text_dim"])
 
     task_info = get_task_info()
-    query_texts = [task_info[task_name]["instruction"] for task_name in task_names]
+    query_texts = []
+    for task_name in task_names:
+        if task_name == "__candidate_no__":
+            query_texts.append("no")
+        elif task_name == "__candidate_yes__":
+            query_texts.append("yes")
+        else:
+            query_texts.append(task_info[task_name]["instruction"])
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=True)
     tokenizer.truncation_side = "left"
@@ -364,6 +371,7 @@ class TaskQueryCollator:
         pad_idx: int,
         type_vocab: dict[str, int],
         query_embeddings: dict[str, torch.Tensor],
+        candidate_embeddings: torch.Tensor,
         max_table_len: Optional[int],
         min_table_rows: int,
     ):
@@ -371,6 +379,7 @@ class TaskQueryCollator:
         self.pad_idx = pad_idx
         self.type_vocab = type_vocab
         self.query_embeddings = query_embeddings
+        self.candidate_embeddings = candidate_embeddings.float()
         self.max_table_len = max_table_len
         self.min_table_rows = min_table_rows
 
@@ -403,7 +412,9 @@ class TaskQueryCollator:
             type_vocab=self.type_vocab,
         )
         table_tensors["query_embeds"] = torch.stack(query_embeds)
-        table_tensors["labels"] = torch.tensor(labels, dtype=torch.float)
+        table_tensors["candidate_embeds"] = self.candidate_embeddings.unsqueeze(0).expand(len(labels), -1, -1)
+        table_tensors["candidate_mask"] = torch.ones(len(labels), self.candidate_embeddings.size(0), dtype=torch.float)
+        table_tensors["labels"] = torch.tensor(labels, dtype=torch.long)
         return table_tensors
 
 
@@ -521,11 +532,17 @@ def main():
     val_dataset = TaskQueryDataset(val_dataset_parts, data_args.max_eval_samples)
     task_names = sorted(set(train_dataset.task_names()) | set(val_dataset.task_names()))
     query_embeddings, query_dim = build_query_embeddings(
-        task_names=task_names,
+        task_names=task_names + ["__candidate_no__", "__candidate_yes__"],
         cache_path=data_args.query_embedding_cache,
         model_path=data_args.query_llm_model_path,
         max_length=data_args.query_max_length,
     )
+    candidate_embeddings = torch.stack(
+        [
+            query_embeddings.pop("__candidate_no__"),
+            query_embeddings.pop("__candidate_yes__"),
+        ]
+    ).float()
 
     text_dim, vocab_keys, text_to_idx, embedding_matrix = load_table_embeddings(get_embedding_cache_paths(data_args))
 
@@ -537,10 +554,10 @@ def main():
         type_vocab_size=type_vocab_size,
         max_table_len=data_args.max_table_len,
         dim_out=query_dim,
-        num_classes=1,
+        num_classes=2,
         problem_type="single_label_classification",
     )
-    model = TaskQueryClassificationModel(
+    model = TaskQueryCandidateDecoderModel(
         config=config,
         embedding_matrix=embedding_matrix,
         query_dim=query_dim,
@@ -552,6 +569,7 @@ def main():
         pad_idx=0,
         type_vocab=type_vocab,
         query_embeddings=query_embeddings,
+        candidate_embeddings=candidate_embeddings,
         max_table_len=data_args.max_table_len,
         min_table_rows=data_args.min_table_rows,
     )

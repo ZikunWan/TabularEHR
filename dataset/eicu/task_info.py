@@ -86,6 +86,13 @@ TASK_INFO = {
         "metric": "accuracy",
         "task_type": "multi_class_classification",
         "num_classes": 5,
+        "candidate": [
+            "normal creatinine, <1.2 mg/dL",
+            "mild creatinine elevation, 1.2 to <2.0 mg/dL",
+            "moderate creatinine elevation, 2.0 to <3.5 mg/dL",
+            "severe creatinine elevation, 3.5 to <5.0 mg/dL",
+            "very severe creatinine elevation, >=5.0 mg/dL",
+        ],
         "instruction": "Given the sequence of ICU events observed in the first 12 hours of the ICU stay, predict the creatinine severity level (0-4) in the next 24 hours based on SOFA criteria: 0:<1.2, 1:1.2-2.0, 2:2.0-3.5, 3:3.5-5.0, 4:>=5.0 mg/dL.",
     },
 
@@ -93,6 +100,13 @@ TASK_INFO = {
         "metric": "accuracy",
         "task_type": "multi_class_classification",
         "num_classes": 5,
+        "candidate": [
+            "normal bilirubin, <1.2 mg/dL",
+            "mild bilirubin elevation, 1.2 to <2.0 mg/dL",
+            "moderate bilirubin elevation, 2.0 to <6.0 mg/dL",
+            "severe bilirubin elevation, 6.0 to <12.0 mg/dL",
+            "very severe bilirubin elevation, >=12.0 mg/dL",
+        ],
         "instruction": "Given the sequence of ICU events observed in the first 12 hours of the ICU stay, predict the bilirubin severity level (0-4) in the next 24 hours based on SOFA criteria: 0:<1.2, 1:1.2-2.0, 2:2.0-6.0, 3:6.0-12.0, 4:>=12.0 mg/dL.",
     },
 
@@ -100,6 +114,13 @@ TASK_INFO = {
         "metric": "accuracy",
         "task_type": "multi_class_classification",
         "num_classes": 5,
+        "candidate": [
+            "normal platelet count, >=150 x10^3/uL",
+            "mild thrombocytopenia, 100 to <150 x10^3/uL",
+            "moderate thrombocytopenia, 50 to <100 x10^3/uL",
+            "severe thrombocytopenia, 20 to <50 x10^3/uL",
+            "very severe thrombocytopenia, <20 x10^3/uL",
+        ],
         "instruction": "Given the sequence of ICU events observed in the first 12 hours of the ICU stay, predict the platelet count severity level (0-4) in the next 24 hours based on SOFA criteria: 0:>=150, 1:100-150, 2:50-100, 3:20-50, 4:<20 x10^3/uL.",
     },
 
@@ -107,6 +128,11 @@ TASK_INFO = {
         "metric": "accuracy",
         "task_type": "multi_class_classification",
         "num_classes": 3,
+        "candidate": [
+            "low white blood cell count, <4 x10^3/uL",
+            "normal white blood cell count, 4 to 12 x10^3/uL",
+            "high white blood cell count, >12 x10^3/uL",
+        ],
         "instruction": "Given the sequence of ICU events observed in the first 12 hours of the ICU stay, predict the WBC count severity level (0-2) in the next 24 hours: 0:<4, 1:4-12, 2:>12 x10^3/uL.",
     },
 }

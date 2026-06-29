@@ -29,7 +29,12 @@ from models.TableEncoder.adapter import QFormerAdapter
 from models.TableEncoder.config import LongTableEncoder1DConfig
 from models.TableEncoder.encoder import LongTableEncoder1D
 from models.next_token_decoder import NextTokenPredictionDecoder
-from models.query_classifier import QueryCrossAttentionHead
+from models.query_attention import QueryCrossAttentionHead
+from utils.candidate_tasks import (
+    build_candidate_embedding_texts,
+    candidate_embedding_keys,
+    get_candidate_texts,
+)
 from utils.metrics import compute_classification_metrics
 
 try:
@@ -173,8 +178,8 @@ class PretrainingArguments(TrainingArguments):
         self.load_best_model_at_end = eval_enabled
 
 
-UNIFIED_PREPROCESSED_FORMAT_VERSION = 4
-SUPPORTED_UNIFIED_PREPROCESSED_FORMATS = {3, 4}
+UNIFIED_PREPROCESSED_FORMAT_VERSION = 5
+SUPPORTED_UNIFIED_PREPROCESSED_FORMATS = {3, 4, 5}
 TASK_TYPE_BINARY = 0
 TASK_TYPE_TTE = 1
 TASK_TYPE_MULTICLASS = 2
@@ -299,6 +304,14 @@ class PreprocessedUnifiedTaskDataset(torch.utils.data.Dataset):
                     shape=(self.sample_count, 3, self.max_tte_bins),
                 ),
             }
+            task_loss_masks_path = os.path.join(supervision_dir, "task_loss_masks.bin")
+            if os.path.exists(task_loss_masks_path):
+                self.supervision_arrays["task_loss_masks"] = np.memmap(
+                    task_loss_masks_path,
+                    dtype=np.float32,
+                    mode="r",
+                    shape=(self.sample_count,),
+                )
         else:
             self.parts = list(self.manifest.get("parts", []))
             self.part_ends = []
@@ -312,13 +325,13 @@ class PreprocessedUnifiedTaskDataset(torch.utils.data.Dataset):
         if self.format_version >= 4:
             print(
                 f"Loaded unified pretraining {split} cache: "
-                f"{self.sample_count} task samples over "
+                f"{self.sample_count} samples over "
                 f"{len(self.input_parts)} shared input parts"
             )
         else:
             print(
                 f"Loaded unified pretraining {split} cache: "
-                f"{self.sample_count} task samples across {len(self.parts)} parts"
+                f"{self.sample_count} samples across {len(self.parts)} parts"
             )
 
     def __len__(self):
@@ -424,6 +437,10 @@ class PreprocessedUnifiedTaskDataset(torch.utils.data.Dataset):
         sample["content_task_id"] = int(supervision["content_task_ids"][supervision_idx])
         sample["task_type_id"] = int(supervision["task_type_ids"][supervision_idx])
         sample["label"] = float(supervision["labels"][supervision_idx])
+        if "task_loss_masks" in supervision:
+            sample["task_loss_mask"] = float(supervision["task_loss_masks"][supervision_idx])
+        else:
+            sample["task_loss_mask"] = 1.0
         sample["survival_labels"] = torch.from_numpy(
             np.asarray(supervision["survival_labels"][supervision_idx]).copy()
         )
@@ -442,6 +459,8 @@ class PreprocessedUnifiedTaskCollator:
         task_query_embeddings: Dict[str, torch.Tensor],
         content_task_names: List[str],
         format_query_embeddings: Dict[str, torch.Tensor],
+        task_candidate_embeddings: torch.Tensor,
+        task_candidate_mask: torch.Tensor,
         max_table_len: Optional[int],
         min_table_rows: int,
     ):
@@ -457,6 +476,8 @@ class PreprocessedUnifiedTaskCollator:
             ],
             dim=0,
         )
+        self.task_candidate_embeddings = task_candidate_embeddings.float()
+        self.task_candidate_mask = task_candidate_mask.float()
         self.max_table_len = max_table_len
         self.min_table_rows = min_table_rows
 
@@ -487,22 +508,25 @@ class PreprocessedUnifiedTaskCollator:
         content_task_ids = []
         task_type_ids = []
         labels = []
+        task_loss_masks = []
         survival_labels = []
         phenotype_values = []
         phenotype_masks = []
 
         for row_idx, (sample, sequence_length) in enumerate(kept_samples):
-            source_start = int(sample["item_ids"].numel()) - sequence_length
+            source_length = int(sample["item_ids"].numel())
+            source_start = source_length - sequence_length
+            source_end = source_start + sequence_length
             for field_name in ("item_ids", "unit_ids", "value_text_ids", "type_ids"):
                 table_tensors[field_name][row_idx, :sequence_length] = sample[
                     field_name
-                ][source_start:].long()
+                ][source_start:source_end].long()
             for field_name in ("numeric_values", "numeric_mask"):
                 table_tensors[field_name][row_idx, :sequence_length] = sample[
                     field_name
-                ][source_start:].float()
+                ][source_start:source_end].float()
 
-            times = sample["times"][source_start:].float().clone()
+            times = sample["times"][source_start:source_end].float().clone()
             valid_times = times > 0
             if valid_times.any():
                 times[valid_times] = times[valid_times] - times[valid_times][0] + 1.0
@@ -513,11 +537,13 @@ class PreprocessedUnifiedTaskCollator:
             content_task_ids.append(int(sample["content_task_id"]))
             task_type_ids.append(int(sample["task_type_id"]))
             labels.append(float(sample["label"]))
+            task_loss_masks.append(float(sample.get("task_loss_mask", 1.0)))
             survival_labels.append(sample["survival_labels"].float())
             phenotype_values.append(sample["phenotype_values"].float())
             phenotype_masks.append(sample["phenotype_mask"].bool())
 
         content_task_id_tensor = torch.tensor(content_task_ids, dtype=torch.long)
+        task_id_tensor = torch.tensor(task_ids, dtype=torch.long)
         task_type_id_tensor = torch.tensor(task_type_ids, dtype=torch.long)
         table_tensors["content_query_embeds"] = self.content_query_embeddings.index_select(
             0, content_task_id_tensor
@@ -530,8 +556,15 @@ class PreprocessedUnifiedTaskCollator:
             + table_tensors["format_query_embeds"]
         ) / math.sqrt(2.0)
         table_tensors["labels"] = torch.tensor(labels, dtype=torch.float)
-        table_tensors["task_ids"] = torch.tensor(task_ids, dtype=torch.long)
+        table_tensors["task_loss_mask"] = torch.tensor(task_loss_masks, dtype=torch.float)
+        table_tensors["task_ids"] = task_id_tensor
         table_tensors["task_type_ids"] = task_type_id_tensor
+        table_tensors["candidate_embeds"] = self.task_candidate_embeddings.index_select(
+            0, task_id_tensor
+        )
+        table_tensors["candidate_mask"] = self.task_candidate_mask.index_select(
+            0, task_id_tensor
+        )
         table_tensors["survival_labels"] = torch.stack(survival_labels)
         table_tensors["phenotype_values"] = torch.stack(phenotype_values)
         table_tensors["phenotype_mask"] = torch.stack(phenotype_masks)
@@ -583,10 +616,10 @@ class JointPretrainingModel(PreTrainedModel):
             time_loss_weight=training_args.ntp_time_loss_weight,
         )
         self.task_query_head = QueryCrossAttentionHead(config, query_dim=query_dim)
-        self.task_classifier = nn.Linear(query_dim, 1)
+        self.task_answer_projection = nn.Linear(query_dim, query_dim)
+        self.task_candidate_projection = nn.Linear(query_dim, query_dim)
+        self.task_logit_scale = nn.Parameter(torch.tensor(1.0))
         self.task_survival_head = nn.Linear(query_dim, 365)
-        max_task_classes = max([1, *[int(value) for value in task_num_classes]])
-        self.task_multiclass_head = nn.Linear(query_dim, max_task_classes)
         self.register_buffer(
             "task_num_classes",
             torch.tensor(task_num_classes, dtype=torch.long),
@@ -669,28 +702,51 @@ class JointPretrainingModel(PreTrainedModel):
 
     def forward_task_from_adapted(self, adapted, inputs):
         pooled = self.task_query_head(inputs["query_embeds"], adapted, None)
-        logits = self.task_classifier(pooled).view(-1)
         task_type_ids = inputs.get("task_type_ids")
         if task_type_ids is None:
             task_type_ids = torch.zeros(
-                logits.shape, dtype=torch.long, device=logits.device
+                pooled.shape[:1], dtype=torch.long, device=pooled.device
             )
         else:
-            task_type_ids = task_type_ids.to(logits.device)
-        labels = inputs["labels"].view(-1).to(logits.dtype)
-        binary_mask = task_type_ids == TASK_TYPE_BINARY
+            task_type_ids = task_type_ids.to(pooled.device)
+        labels = inputs["labels"].view(-1).to(pooled.dtype)
+        task_loss_mask = inputs.get("task_loss_mask")
+        if task_loss_mask is None:
+            task_loss_mask = torch.ones_like(labels, dtype=torch.bool, device=pooled.device)
+        else:
+            task_loss_mask = task_loss_mask.to(pooled.device).bool()
+        binary_mask = (task_type_ids == TASK_TYPE_BINARY) & task_loss_mask
+        multiclass_mask = (task_type_ids == TASK_TYPE_MULTICLASS) & task_loss_mask
+        classification_mask = binary_mask | multiclass_mask
+
+        answer_state = F.normalize(self.task_answer_projection(pooled), dim=-1)
+        candidate_state = F.normalize(
+            self.task_candidate_projection(
+                inputs["candidate_embeds"].to(pooled.device, pooled.dtype)
+            ),
+            dim=-1,
+        )
+        candidate_scores = torch.einsum("bd,bkd->bk", answer_state, candidate_state)
+        candidate_scores = candidate_scores * self.task_logit_scale.exp().clamp(max=100.0)
+        candidate_mask = inputs.get("candidate_mask")
+        if candidate_mask is not None:
+            candidate_scores = candidate_scores.masked_fill(
+                candidate_mask.to(candidate_scores.device) <= 0,
+                torch.finfo(candidate_scores.dtype).min,
+            )
 
         loss_terms = []
         if binary_mask.any():
-            binary_loss = F.binary_cross_entropy_with_logits(
-                logits[binary_mask], labels[binary_mask]
+            binary_loss = F.cross_entropy(
+                candidate_scores[binary_mask].float(),
+                labels[binary_mask].long(),
             )
             loss_terms.append(binary_loss)
         else:
-            binary_loss = logits.sum() * 0.0
+            binary_loss = pooled.sum() * 0.0
 
         survival_logits = self.task_survival_head(pooled)
-        tte_mask = task_type_ids == TASK_TYPE_TTE
+        tte_mask = (task_type_ids == TASK_TYPE_TTE) & task_loss_mask
         if tte_mask.any():
             survival_labels = inputs["survival_labels"].to(
                 survival_logits.device, survival_logits.dtype
@@ -706,40 +762,29 @@ class JointPretrainingModel(PreTrainedModel):
         else:
             tte_loss = survival_logits.sum() * 0.0
 
-        multiclass_logits = self.task_multiclass_head(pooled)
-        multiclass_mask = task_type_ids == TASK_TYPE_MULTICLASS
         if multiclass_mask.any():
-            task_ids = inputs["task_ids"].to(logits.device)
-            class_targets = labels[multiclass_mask].long()
-            selected_logits = multiclass_logits[multiclass_mask]
-            selected_task_ids = task_ids[multiclass_mask]
-            selected_num_classes = self.task_num_classes.to(logits.device).index_select(
-                0, selected_task_ids
+            multiclass_loss = F.cross_entropy(
+                candidate_scores[multiclass_mask].float(),
+                labels[multiclass_mask].long(),
             )
-            class_range = torch.arange(
-                selected_logits.size(-1), device=selected_logits.device
-            ).view(1, -1)
-            valid_class_mask = class_range < selected_num_classes.view(-1, 1)
-            selected_logits = selected_logits.masked_fill(
-                ~valid_class_mask,
-                torch.finfo(selected_logits.dtype).min,
-            )
-            multiclass_loss = F.cross_entropy(selected_logits, class_targets)
             loss_terms.append(multiclass_loss)
         else:
-            multiclass_loss = multiclass_logits.sum() * 0.0
+            multiclass_loss = pooled.sum() * 0.0
 
-        loss = torch.stack(loss_terms).sum() if loss_terms else logits.sum() * 0.0
+        loss = torch.stack(loss_terms).sum() if loss_terms else pooled.sum() * 0.0
         return {
             "loss": loss,
             "binary_loss": binary_loss,
             "tte_loss": tte_loss,
             "multiclass_loss": multiclass_loss,
-            "logits": logits,
+            "logits": candidate_scores[:, :2],
+            "candidate_scores": candidate_scores,
             "survival_logits": survival_logits,
-            "multiclass_logits": multiclass_logits,
+            "multiclass_logits": candidate_scores,
             "labels": labels,
             "binary_mask": binary_mask,
+            "classification_mask": classification_mask,
+            "task_loss_mask": task_loss_mask,
             "task_type_ids": task_type_ids,
         }
 
@@ -1200,6 +1245,47 @@ def load_cached_task_num_classes(cache_root: str, task_names: List[str]) -> List
     return [max(1, int(num_classes.get(task_name, 1))) for task_name in task_names]
 
 
+def task_candidate_texts(task_name: str, task_info: Dict[str, dict]) -> Optional[List[str]]:
+    info = task_info.get(task_name)
+    if not info:
+        return None
+    if info.get("task_type") not in {
+        "binary_classification",
+        "multi_class_classification",
+    }:
+        return None
+    return get_candidate_texts(info)
+
+
+def build_task_candidate_tensors(
+    task_names: List[str],
+    task_info: Dict[str, dict],
+    task_query_embeddings: Dict[str, torch.Tensor],
+    query_dim: int,
+):
+    candidates_by_task = {
+        task_name: task_candidate_texts(task_name, task_info)
+        for task_name in task_names
+    }
+    max_candidates = max(
+        [1, *[len(candidates) for candidates in candidates_by_task.values() if candidates]]
+    )
+    candidate_embeddings = torch.zeros(
+        len(task_names), max_candidates, query_dim, dtype=torch.float
+    )
+    candidate_mask = torch.zeros(len(task_names), max_candidates, dtype=torch.float)
+
+    for task_idx, task_name in enumerate(task_names):
+        candidate_texts = candidates_by_task.get(task_name)
+        if not candidate_texts:
+            continue
+        keys = candidate_embedding_keys(task_name, candidate_texts)
+        for candidate_idx, key in enumerate(keys):
+            candidate_embeddings[task_idx, candidate_idx] = task_query_embeddings[key].float()
+            candidate_mask[task_idx, candidate_idx] = 1.0
+    return candidate_embeddings, candidate_mask
+
+
 def main():
     parser = HfArgumentParser((DataArguments, PretrainingArguments))
     data_args, training_args = parser.parse_args_into_dataclasses()
@@ -1219,9 +1305,23 @@ def main():
     )
     task_info = tqc.get_task_info()
     task_query_texts = {
-        task_name: task_info[task_name]["instruction"]
+        task_name: task_info.get(task_name, {}).get(
+            "instruction",
+            "Self-supervised pretraining context from one hospital encounter.",
+        )
         for task_name in content_task_names
     }
+    for task_name in task_names:
+        candidate_texts = task_candidate_texts(task_name, task_info)
+        if not candidate_texts:
+            continue
+        task_query_texts.update(
+            build_candidate_embedding_texts(
+                task_name,
+                task_info[task_name]["instruction"],
+                candidate_texts,
+            )
+        )
     task_query_texts.update(FORMAT_QUERY_TEXTS)
     task_query_embeddings = pml.build_knowledge_query_embeddings(
         query_texts=task_query_texts,
@@ -1267,6 +1367,12 @@ def main():
             f"joint pretraining: task={task_query_dim}, "
             f"phenotype={phenotype_query_dim}"
         )
+    task_candidate_embeddings, task_candidate_mask = build_task_candidate_tensors(
+        task_names=task_names,
+        task_info=task_info,
+        task_query_embeddings=task_query_embeddings,
+        query_dim=task_query_dim,
+    )
     config = LongTableEncoder1DConfig(
         text_dim=text_dim,
         type_vocab_size=max(type_vocab.values()) + 1,
@@ -1300,12 +1406,14 @@ def main():
         task_query_embeddings=task_query_embeddings,
         content_task_names=content_task_names,
         format_query_embeddings=task_query_embeddings,
+        task_candidate_embeddings=task_candidate_embeddings,
+        task_candidate_mask=task_candidate_mask,
         max_table_len=data_args.max_table_len,
         min_table_rows=data_args.min_table_rows,
     )
 
     print(f"Unified cached train/val: {len(train_dataset)}/{len(eval_dataset)}")
-    print(f"Task queries: content={len(content_task_names)}, output_tasks={len(task_names)}, formats=2")
+    print(f"Task queries: content={len(content_task_names)}, output_tasks={len(task_names)}, formats=3")
     print(f"Knowledge query dimension: {task_query_dim}")
     print(f"Phenotype metric queries: {len(phenotype_specs)}")
 

@@ -87,17 +87,24 @@ MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 python ./preprocess/build_unified_pretrain_cache
     --eicu_task_val_sample_info_path "/data/zikun_workspace/eicu-crd/processed/sample_info_val.json" \
     --ehrshot_task_train_sample_info_path "/data/EHR_data_public/EHRSHOT/index/ehrshot_train.csv" \
     --ehrshot_task_val_sample_info_path "/data/EHR_data_public/EHRSHOT/index/ehrshot_val.csv" \
+    --pretraining_sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/train/next_token_prediction.csv" \
+    --pretraining_val_sample_info_path "/data/zikun_workspace/mimic-iv-3.1_tabular/task_index/val/next_token_prediction.csv" \
+    --eicu_pretraining_sample_info_path "/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_train.json" \
+    --eicu_pretraining_val_sample_info_path "/data/zikun_workspace/eicu-crd/processed/pretraining_index/sample_info_val.json" \
+    --ehrshot_pretraining_sample_info_path "/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_train.csv" \
+    --ehrshot_pretraining_val_sample_info_path "/data/EHR_data_public/EHRSHOT/pretraining_index/sample_info_val.csv" \
+    --include_pretraining_context true \
     --tte_index_dir "/data/zikun_workspace/tte_task_index" \
     --phenotype_spec_path "/data/zikun_workspace/.cache/phenotype_metric_learning/phenotype_query_specs.json" \
     --output_dir "/data/zikun_workspace/.cache/unified_pretraining/inputs" \
-    --run_id "unified_pretrain_cache_v4" \
+    --run_id "unified_pretrain_cache_v5" \
     --resume true \
     --min_table_rows 2 \
-    --part_size 1024 \
-    --num_workers 16 \
+    --part_size 2048 \
+    --num_workers 24 \
     --worker_chunksize 4 \
     --worker_torch_threads 1 \
-    --worker_max_tasks_per_child 1 \
+    --worker_max_tasks_per_child 0 \
     --supervision_write_buffer_size "${SUPERVISION_WRITE_BUFFER_SIZE}" &
 
 build_pid="$!"

@@ -38,6 +38,7 @@ class Args:
     batch_size: int = 64
     epochs: int = 50
     learning_rate: float = 1e-5
+    min_lr: float = 1e-6
     weight_decay: float = 0.01
     warmup_ratio: float = 0.05
     seed: int = 42
@@ -368,6 +369,8 @@ def run_training(args: Args) -> None:
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
         learning_rate=args.learning_rate,
+        lr_scheduler_type="cosine_with_min_lr",
+        lr_scheduler_kwargs={"min_lr": args.min_lr},
         weight_decay=args.weight_decay,
         warmup_ratio=args.warmup_ratio,
         logging_steps=args.logging_steps,

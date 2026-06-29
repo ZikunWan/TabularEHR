@@ -1,3 +1,6 @@
+#!/bin/bash
+source "$(dirname "$0")/../common/silent_info.sh"
+
 if [ "$CACHE_ONLY" = "true" ]; then
     python ./pretraining/knowledge_encoder.py \
         --concept_path "/data/zikun_workspace/knowledge/CONCEPT.csv" \
@@ -22,6 +25,7 @@ else
         --batch_size 256 \
         --epochs 5 \
         --learning_rate 2e-5 \
+        --min_lr 1e-6 \
         --weight_decay 0.01 \
         --warmup_ratio 0.05 \
         --num_workers 8 \

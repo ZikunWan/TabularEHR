@@ -16,6 +16,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from dataset.eicu.task_info import get_task_info
+from utils.measurement_cache import get_or_build_measurement_table, stable_cache_key
 
 warnings.filterwarnings("ignore")
 
@@ -78,6 +79,7 @@ class EICUDataset(Dataset):
         self.use_table_length_cache = use_table_length_cache
         self.local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
         self.table_length_cache_dir = os.path.join(self.processed_dir, "cache", "table_length")
+        self.measurement_cache_dir = os.path.join(self.processed_dir, "cache", "measurement_table")
         os.makedirs(self.table_length_cache_dir, exist_ok=True)
         sample_info_name = os.path.basename(self.sample_info_path) if self.sample_info_path else "sample_info_memory.json"
         self.table_length_cache_file = os.path.join(self.table_length_cache_dir, f"{sample_info_name}.table_length.json")
@@ -323,7 +325,7 @@ class EICUDataset(Dataset):
     def _process_item(self, index):
         sample = self.sample_info[index]
         if sample.get("task") == "pretraining_context":
-            measurement_df = self.structed_EHR_input_process(sample)
+            measurement_df = self._cached_measurement_table(sample)
             output_sample = {
                 "idx": index,
                 "input": "",
@@ -337,7 +339,7 @@ class EICUDataset(Dataset):
 
         label = sample["label"]
 
-        measurement_df = self.structed_EHR_input_process(sample)
+        measurement_df = self._cached_measurement_table(sample)
         task_info = self.task_schema[self.task_name]
         output_sample = {
             "idx": index,
@@ -350,6 +352,18 @@ class EICUDataset(Dataset):
         }
 
         return output_sample
+
+    def _cached_measurement_table(self, sample):
+        cache_key = stable_cache_key(
+            sample.get("icustay_id"),
+            sample.get("task_name"),
+            sample.get("obs_hours", self.obs_size),
+        )
+        return get_or_build_measurement_table(
+            self.measurement_cache_dir,
+            cache_key,
+            lambda: self.structed_EHR_input_process(sample),
+        )
 
     def __len__(self):
         return len(self.sample_info)

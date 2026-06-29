@@ -13,6 +13,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from dataset.mimic_iv_cdm.task_info import get_task_info
+from utils.measurement_cache import get_or_build_measurement_table, stable_cache_key
 
 
 class MIMICIVCDM(Dataset):
@@ -34,6 +35,7 @@ class MIMICIVCDM(Dataset):
         self.task_schema = get_task_info()
         self.categories = ["appendicitis", "cholecystitis", "diverticulitis", "pancreatitis"]   
         self.task_name = task_name
+        self.measurement_cache_dir = os.path.join(self.root_dir, "cache", "measurement_table")
 
         self._load_mappings()
         self._load_raw_data()
@@ -211,7 +213,12 @@ class MIMICIVCDM(Dataset):
         hadm_id = index_item["hadm_id"]
         cur_item = self.raw_data[category][hadm_id]
 
-        measurement_table = self.structed_EHR_input_process(cur_item)
+        cache_key = stable_cache_key(category, hadm_id)
+        measurement_table = get_or_build_measurement_table(
+            self.measurement_cache_dir,
+            cache_key,
+            lambda: self.structed_EHR_input_process(cur_item),
+        )
 
         label = self._build_label(index_item, category)
         task_info = self.task_schema[self.task_name]

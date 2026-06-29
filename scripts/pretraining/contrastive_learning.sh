@@ -1,3 +1,6 @@
+#!/bin/bash
+source "$(dirname "$0")/../common/silent_info.sh"
+
 MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --num_gpus=8 ./pretraining/contrastive_learning.py \
     --deepspeed "./ds_config_zero2.json" \
     --dataset mimic_iv eicu ehrshot \
@@ -22,6 +25,8 @@ MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --num_gpus=8 ./pretraining/contrastive
     --gradient_accumulation_steps 1 \
     --dataloader_num_workers 8 \
     --learning_rate 1e-5 \
+    --lr_scheduler_type cosine_with_min_lr \
+    --lr_scheduler_kwargs '{"min_lr": 1e-6}' \
     --num_train_epochs 5 \
     --logging_steps 10 \
     --save_steps 100 \

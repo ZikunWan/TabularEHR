@@ -11,10 +11,10 @@ TASK_INFO = {
         "task_type": "binary_classification",
         "instruction_template": "Based on the patient's clinical history up to {prediction_point}, predict whether {metric} will be abnormal in the next label window ({label_window}).",
     },
-    "multi_label_prediction": {
+    "candidate_metric_prediction": {
         "metric": "auroc",
-        "task_type": "multi_label_classification",
-        "instruction_template": "Based on the patient's clinical history up to {prediction_point}, predict all metrics across all future windows.",
+        "task_type": "candidate_classification",
+        "instruction_template": "Based on the patient's clinical history up to {prediction_point}, predict each future metric abnormality as an independent no/yes candidate task.",
     },
     "tacrolimus_abnormal_survival": {
         "metric": "survival",
@@ -38,40 +38,25 @@ TASK_INFO = {
 
 ALL_METRICS = sorted(
     [
-        "ALT",
-        "AST",
-        "ALP",
-        "GGT",
-        "TB",
-        "DB",
-        "Bile_Acid",
-        "TP",
         "ALB",
-        "PT",
-        "INR",
-        "Tacrolimus_Conc",
-        "CsA_Trough",
-        "CsA_Peak",
-        "WBC",
-        "N_Percent",
-        "Lymphocyte_Abs",
-        "HB",
-        "PLT",
+        "ALP",
         "CR",
         "Glucose",
+        "HB",
+        "INR",
+        "N_Percent",
+        "PLT",
+        "PT",
+        "TP",
         "Uric_Acid",
-        "Triglyceride",
-        "Cholesterol",
+        "WBC",
     ]
 )
-ALL_POINTS = ["day14", "day30", "day180", "day365", "day395", "day730"]
+ALL_POINTS = ["day30", "day180", "day365"]
 PREDICTION_POINTS = {
-    "day14": (14, "2w-1m", "Day 14"),
-    "day30": (30, "2m-6m", "Day 30"),
-    "day180": (180, "7m-12m", "Day 180"),
-    "day365": (365, "13m-14m", "Day 365"),
-    "day395": (395, "15m-24m", "Day 395"),
-    "day730": (730, "2y+", "Day 730"),
+    "day30": (30, "30-180d", "Day 30"),
+    "day180": (180, "180-365d", "Day 180"),
+    "day365": (365, "365d+", "Day 365"),
 }
 
 

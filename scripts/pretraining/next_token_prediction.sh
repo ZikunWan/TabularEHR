@@ -1,3 +1,6 @@
+#!/bin/bash
+source "$(dirname "$0")/../common/silent_info.sh"
+
 deepspeed --num_gpus=8 ./pretraining/next_token_prediction.py \
     --deepspeed "./ds_config_zero2.json" \
     --dataset mimic_iv eicu ehrshot \
@@ -19,6 +22,8 @@ deepspeed --num_gpus=8 ./pretraining/next_token_prediction.py \
     --gradient_accumulation_steps 1 \
     --dataloader_num_workers 32 \
     --learning_rate 1e-4 \
+    --lr_scheduler_type cosine_with_min_lr \
+    --lr_scheduler_kwargs '{"min_lr": 1e-6}' \
     --warmup_steps 100 \
     --weight_decay 0.01 \
     --num_train_epochs 1 \

@@ -367,28 +367,17 @@ def build_knowledge_query_embeddings(
 def build_task_query_embeddings(
     query_texts: dict[str, str],
     cache_path: str,
-    query_encoder: str,
     max_length: int,
-    query_llm_model_path: str,
     knowledge_encoder_path: str,
     knowledge_encoder_base_model_path: str,
     batch_size: int = 16,
 ):
-    if query_encoder == "llm":
-        return build_query_embeddings(
-            query_texts,
-            cache_path,
-            query_llm_model_path,
-            max_length,
-            batch_size=batch_size,
-        )
-    if query_encoder == "knowledge":
-        return build_knowledge_query_embeddings(
-            query_texts=query_texts,
-            cache_path=cache_path,
-            model_path=knowledge_encoder_path,
-            base_model_path=knowledge_encoder_base_model_path,
-            max_length=max_length,
-            batch_size=batch_size,
-        )
-    raise ValueError(f"Unsupported query_encoder: {query_encoder}. Expected 'llm' or 'knowledge'.")
+    return build_knowledge_query_embeddings(
+        query_texts=query_texts,
+        cache_path=cache_path,
+        model_path=knowledge_encoder_path,
+        base_model_path=knowledge_encoder_base_model_path,
+        max_length=max_length,
+        batch_size=batch_size,
+    )
+   

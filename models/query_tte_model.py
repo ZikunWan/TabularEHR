@@ -11,7 +11,7 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 from models.TableEncoder.adapter import QFormerAdapter
 from models.TableEncoder.config import LongTableEncoder1DConfig
 from models.TableEncoder.encoder import LongTableEncoder1D
-from models.query_classifier import QueryCrossAttentionHead
+from models.query_attention import QueryCrossAttentionHead
 
 
 class TaskQueryPiecewiseSurvivalModel(PreTrainedModel):

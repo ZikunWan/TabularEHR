@@ -45,11 +45,32 @@ def load_encoder_weights(
     return model
 
 
+def load_encoder_and_query_head_weights(
+    model,
+    pretrained_path: str,
+    log_fn: Optional[Callable[..., None]] = None,
+):
+    state_dict, checkpoint_path = _load_checkpoint_state_dict(pretrained_path)
+    remapped = {}
+    for key, value in state_dict.items():
+        if key.startswith(("encoder.", "adapter.")):
+            remapped[key] = value
+        elif key.startswith("task_query_head."):
+            remapped["query_head." + key.removeprefix("task_query_head.")] = value
+        elif key.startswith("query_head."):
+            remapped[key] = value
+
+    model.load_state_dict(remapped, strict=False)
+    if log_fn is not None:
+        log_fn(f"Loaded {len(remapped)} encoder/query-head tensors from {checkpoint_path}.")
+    return model
+
+
 def load_task_model_weights(
     model,
     checkpoint_path: str,
     fine_tune_mode: Optional[str] = None,
-    trainable_module_names: Sequence[str] = ("classifier",),
+    trainable_module_names: Optional[Sequence[str]] = None,
     log_fn: Optional[Callable[..., None]] = None,
 ):
     state_dict, resolved_checkpoint_path = _load_checkpoint_state_dict(checkpoint_path)
@@ -70,28 +91,10 @@ def load_task_model_weights(
 def apply_fine_tune_mode(
     model,
     mode: str,
-    trainable_module_names: Sequence[str] = ("classifier",),
+    trainable_module_names: Optional[Sequence[str]] = None,
     log_fn: Callable[..., None] = print,
 ):
-    if mode == "full_fine_tune":
-        log_fn("Fine-tune mode: full_fine_tune")
-        return model
-
-    if mode != "linear_probe":
-        raise ValueError("fine_tune_mode must be 'full_fine_tune' or 'linear_probe'")
-
-    for parameter in model.parameters():
-        parameter.requires_grad = False
-
-    trainable_prefixes = tuple(f"{name}." for name in trainable_module_names)
-    for name, parameter in model.named_parameters():
-        if name.startswith(trainable_prefixes):
-            parameter.requires_grad = True
-
-    trainable_params = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
-    total_params = sum(parameter.numel() for parameter in model.parameters())
-    log_fn(
-        f"Fine-tune mode: linear_probe "
-        f"({trainable_params:,}/{total_params:,} trainable parameters)"
-    )
+    if mode != "full_fine_tune":
+        raise ValueError("fine_tune_mode must be 'full_fine_tune'")
+    log_fn("Fine-tune mode: full_fine_tune")
     return model

@@ -21,6 +21,7 @@ if PROJECT_ROOT not in sys.path:
 
 from dataset.mimic.input_format import MIMICIVStringConvertor, safe_read
 from dataset.mimic.task_info import get_task_info
+from utils.measurement_cache import get_or_build_measurement_table, stable_cache_key
 
 _TABLE_LENGTH_WORKER_DATASET = None
 _TABLE_LENGTH_WORKER_TASK_SCHEMA = None
@@ -169,8 +170,12 @@ def _init_sample_cache_worker(
     worker_dataset.task_schema = task_schema
     worker_dataset.sample_info = sample_info
     worker_dataset.ehr_dir = ehr_dir
+    worker_dataset.cache_dir = cache_dir
+    worker_dataset.measurement_cache_dir = os.path.join(cache_dir, "measurement_table")
     worker_dataset.sample_cache_dir = sample_cache_dir
     worker_dataset.similar_item_dir = similar_item_dir
+    worker_dataset.itemid_representation = itemid_representation
+    worker_dataset.concept_map_dir = concept_map_dir
     worker_dataset.similar_item = {}
     _SAMPLE_CACHE_WORKER_DATASET = worker_dataset
 
@@ -207,6 +212,7 @@ class MIMICIV(Dataset):
         self.similar_item_dir  = os.path.join(self.cache_dir, "similar_item")  # candidate lists
         self.table_length_cache_dir = os.path.join(self.cache_dir, "table_length")
         self.sample_cache_root_dir = os.path.join(self.cache_dir, "sample")
+        self.measurement_cache_dir = os.path.join(self.cache_dir, "measurement_table")
         # ──────────────────────────────────────────────────────────────────
 
         os.makedirs(self.similar_item_dir, exist_ok=True)
@@ -524,9 +530,21 @@ class MIMICIV(Dataset):
             item for item in trajectory_events
             if item.get("file_name") not in {"discharge", "radiology"}
         ]
-        measurement_table = self.structed_EHR_input_process(
-            structured_events,
-            patient_trajectory_list,
+        cache_key = stable_cache_key(
+            subject_id,
+            task_name,
+            context_begin,
+            context_end,
+            self.itemid_representation,
+            self.concept_map_dir,
+        )
+        measurement_table = get_or_build_measurement_table(
+            self.measurement_cache_dir,
+            cache_key,
+            lambda: self.structed_EHR_input_process(
+                structured_events,
+                patient_trajectory_list,
+            ),
         )
 
         instruction = self.task_schema[task_name]["instruction"]

@@ -15,6 +15,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from dataset.renji.task_info import get_task_info
+from utils.measurement_cache import get_or_build_measurement_table, stable_cache_key
 
 
 def _is_main_process():
@@ -35,8 +36,7 @@ class RenjiDataset(Dataset):
     """
     Renji Pediatric Liver Transplant Dataset.
     
-    Predicts outcomes at 4 fixed time points per patient:
-    - Day 0: Predict 0-30d labels
+    Predicts outcomes at 3 fixed time points per patient:
     - Day 30: Predict 30-180d labels
     - Day 180: Predict 180-365d labels
     - Day 365: Predict 365d+ labels
@@ -44,7 +44,6 @@ class RenjiDataset(Dataset):
     
     # Prediction points: (cutoff_day, label_prefix, readable_name)
     PREDICTION_POINTS = {
-        'day0': (0, '0-30d', 'Day 0'),
         'day30': (30, '30-180d', 'Day 30'),
         'day180': (180, '180-365d', 'Day 180'),
         'day365': (365, '365d+', 'Day 365'),
@@ -93,17 +92,17 @@ class RenjiDataset(Dataset):
         'ABO_compatibility': 'ABO Compatibility',
     }
     
-    # Combined list of all metrics for multi-task learning (sorted for consistency)
+    # Balanced metrics for multi-task classification.
+    # Selected over day30/day180/day365 with:
+    # 0.2 <= positive_rate <= 0.8 and minority_count >= 150 at every time point.
     ALL_METRICS = sorted([
-        'ALT', 'AST', 'ALP', 'GGT', 'TB', 'DB', 'Bile_Acid', 'TP', 'ALB', 'PT', 'INR', # Graft Injury
-        'Tacrolimus_Conc', 'CsA_Trough', 'CsA_Peak', #'Rapa_Conc',                     # Drug Conc
-        'WBC', 'N_Percent', 'Lymphocyte_Abs', 'HB', 'PLT', #'Eosinophil_Percent',      # Immune/Infection
-        'CR', 'Glucose', 'Uric_Acid', 'Triglyceride', 'Cholesterol', #'Blood_Ammonia', # Metabolic/Renal
-        'CMV_DNA', 'EBV_DNA', 'HBV_DNA', # 'HBsAg', 'HBsAb', 'HBeAg', 'HBeAb', 'HBcAb' # Virus
+        'ALB', 'ALP', 'PT', 'INR', 'TP',                           # Graft injury
+        'WBC', 'N_Percent', 'HB', 'PLT',                           # Immune/Infection
+        'CR', 'Glucose', 'Uric_Acid',                              # Metabolic/Renal
     ])
     
     # Combined list of all prediction points (sorted by day)
-    ALL_POINTS = ['day0', 'day30', 'day180', 'day365']
+    ALL_POINTS = ['day30', 'day180', 'day365']
     TASK_INFO = get_task_info()
     TASK_ALL_METRICS = ALL_METRICS
     TASK_ALL_POINTS = ALL_POINTS
@@ -127,7 +126,7 @@ class RenjiDataset(Dataset):
             target_metrics: List of metric names to filter (e.g., ['ALT', 'AST', 'TB'])
                           If None, use all metrics
             target_prediction_points: List of prediction point keys to filter
-                          (e.g., ['day0', 'day30', 'day180', 'day365']). If None, use all.
+                          (e.g., ['day30', 'day180', 'day365']). If None, use all.
             shuffle: Whether to shuffle the dataset
         """
         self.root_dir = root_dir
@@ -141,6 +140,7 @@ class RenjiDataset(Dataset):
         
         self.followup_dir = os.path.join(self.root_dir, 'follow_ups')
         self.index_dir = os.path.join(self.root_dir, 'index')
+        self.measurement_cache_dir = os.path.join(self.root_dir, "cache", "measurement_table")
         
         self._init_configs()
         self._load_auxiliary_data()
@@ -751,7 +751,7 @@ class RenjiDataset(Dataset):
         Build sample index.
         - One sample per (patient, prediction_point) with point-specific multi-label supervision.
         """
-        _rank0_print(f"[{self.split}] Building sample index (mode=multi_label)...")
+        _rank0_print(f"[{self.split}] Building sample index (mode=candidate_metric)...")
         
         # Determine which prediction points to use
         active_points = self.active_points
@@ -1081,26 +1081,51 @@ class RenjiDataset(Dataset):
             if col_name in patient_labels and pd.notna(patient_labels[col_name]):
                 labels_matrix[target_point_idx, m_idx] = float(patient_labels[col_name])
 
+        candidate_tasks = []
+        for m_idx, met in enumerate(self.ALL_METRICS):
+            label_value = labels_matrix[target_point_idx, m_idx]
+            if label_value == -100:
+                continue
+            query = (
+                f"Task: predict future {met} abnormality during {label_prefix} "
+                f"after liver transplantation using clinical history up to "
+                f"{readable_point} post-transplant."
+            )
+            candidate_tasks.append(
+                {
+                    "query": query,
+                    "candidates": ["no", "yes"],
+                    "label": int(label_value.item()),
+                    "point": readable_point,
+                    "point_key": prediction_point,
+                    "point_index": target_point_idx,
+                    "metric": met,
+                    "metric_index": m_idx,
+                    "window": label_prefix,
+                }
+            )
+
         output_label = labels_matrix
-        task_info = deepcopy(self.task_schema["multi_label_prediction"])
+        task_info = deepcopy(self.task_schema["candidate_metric_prediction"])
         instruction = task_info["instruction_template"].format(
             prediction_point=f"{readable_point} post-transplant",
         )
         task_info.update(
             {
-                "task": "multi_label",
+                "task": "candidate_metric",
                 "prediction_point": readable_point,
                 "label_window": label_prefix,
                 "window": label_prefix,
                 "instruction": instruction,
             }
         )
-        final_table = self.structed_EHR_input_process(
-            static_features=static_features,
-            df_followup=df_followup,
-            surgery_date=surgery_date,
-            age_years=age_years,
-            gender=gender,
+        final_table = self._cached_measurement_table(
+            ["candidate_metric", fname_key, prediction_point, cutoff_day],
+            static_features,
+            df_followup,
+            surgery_date,
+            age_years,
+            gender,
         )
         
 
@@ -1111,11 +1136,34 @@ class RenjiDataset(Dataset):
             "output": output_label if isinstance(output_label, torch.Tensor) else str(output_label),
             "task_info": task_info,
             "measurement_table": final_table,
+            "candidate_tasks": candidate_tasks,
         }
         
-        output_sample["candidates"] = ["0", "1"]
+        output_sample["candidates"] = ["no", "yes"]
 
         return output_sample
+
+    def _cached_measurement_table(
+        self,
+        cache_key_parts,
+        static_features,
+        df_followup,
+        surgery_date=None,
+        age_years=None,
+        gender=None,
+    ):
+        cache_key = stable_cache_key(self.__class__.__name__, self.split, *cache_key_parts)
+        return get_or_build_measurement_table(
+            self.measurement_cache_dir,
+            cache_key,
+            lambda: self.structed_EHR_input_process(
+                static_features=static_features,
+                df_followup=df_followup,
+                surgery_date=surgery_date,
+                age_years=age_years,
+                gender=gender,
+            ),
+        )
 
     def _expand_multivalue_rows(self, df):
         """
@@ -1287,6 +1335,7 @@ class RenjiTacrolimusSurvivalDataset(RenjiDataset):
         self.task_schema = deepcopy(self.TASK_INFO)
         self.followup_dir = os.path.join(self.root_dir, "follow_ups")
         self.index_dir = os.path.join(self.root_dir, "index")
+        self.measurement_cache_dir = os.path.join(self.root_dir, "cache", "measurement_table")
         self._init_configs()
         self._load_auxiliary_data()
 
@@ -1449,12 +1498,19 @@ class RenjiTacrolimusSurvivalDataset(RenjiDataset):
             }
         )
 
-        final_table = self.structed_EHR_input_process(
-            static_features=static_features,
-            df_followup=df_followup,
-            surgery_date=surgery_date,
-            age_years=age_years,
-            gender=gender,
+        final_table = self._cached_measurement_table(
+            [
+                "tacrolimus_survival",
+                sample["fname_key"],
+                sample["stage_id"],
+                sample["prediction_day"],
+                sample["observed_day"],
+            ],
+            static_features,
+            df_followup,
+            surgery_date,
+            age_years,
+            gender,
         )
         survival_metadata = np.zeros(self.MAX_SURVIVAL_BINS, dtype=np.float32)
         survival_metadata[0] = sample["stage_end_horizon"]
@@ -1507,6 +1563,7 @@ class RenjiDeathSurvivalDataset(RenjiDataset):
         self.task_schema = deepcopy(self.TASK_INFO)
         self.followup_dir = os.path.join(self.root_dir, "follow_ups")
         self.index_dir = os.path.join(self.root_dir, "index")
+        self.measurement_cache_dir = os.path.join(self.root_dir, "cache", "measurement_table")
         self._init_configs()
         self._load_patient_info_data()
         self._valid_followup_cache = {}
@@ -1629,12 +1686,19 @@ class RenjiDeathSurvivalDataset(RenjiDataset):
             }
         )
 
-        final_table = self.structed_EHR_input_process(
-            static_features=static_features,
-            df_followup=df_followup,
-            surgery_date=surgery_date,
-            age_years=age_years,
-            gender=gender,
+        final_table = self._cached_measurement_table(
+            [
+                "death_survival",
+                sample["fname_key"],
+                sample["stage_id"],
+                sample["prediction_day"],
+                sample["observed_day"],
+            ],
+            static_features,
+            df_followup,
+            surgery_date,
+            age_years,
+            gender,
         )
         return {
             "idx": idx,
