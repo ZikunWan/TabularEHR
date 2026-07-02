@@ -22,7 +22,7 @@ MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --num_gpus=8 ./pretraining/pretrain.py
     --query_embedding_batch_size 256 \
     --max_table_len 4096 \
     --min_table_rows 2 \
-    --per_device_train_batch_size 32 \
+    --per_device_train_batch_size 50 \
     --per_device_eval_batch_size 32 \
     --gradient_accumulation_steps 1 \
     --dataloader_num_workers 4 \
@@ -32,7 +32,7 @@ MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --num_gpus=8 ./pretraining/pretrain.py
     --warmup_steps 1000 \
     --weight_decay 0.01 \
     --ntp_loss_weight 1.0 \
-    --task_loss_weight 0.25 \
+    --task_loss_weight 1.0 \
     --metric_loss_weight 1.0 \
     --ntp_time_loss_weight 0.1 \
     --huber_delta 1.0 \
@@ -42,9 +42,9 @@ MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --num_gpus=8 ./pretraining/pretrain.py
     --min_pair_delta 0.0 \
     --num_train_epochs 1 \
     --logging_steps 10 \
-    --save_steps 200 \
-    --eval_strategy "no" \
-    --eval_steps 200 \
+    --save_steps 5000 \
+    --eval_strategy "steps" \
+    --eval_steps 5000 \
     --save_total_limit 1 \
     --metric_for_best_model "eval_loss" \
     --greater_is_better false \
@@ -53,5 +53,4 @@ MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --num_gpus=8 ./pretraining/pretrain.py
     --report_to "wandb" \
     --wandb_project "Joint_Pretraining" \
     --run_name "unified_task_anchored_joint_pretrain" \
-    --resume_from_checkpoint "/data/zikun_workspace/checkpoints/pretraining/joint/checkpoint-8400" \
     --output_dir "/data/zikun_workspace/checkpoints/pretraining/joint"

@@ -24,7 +24,7 @@ TASKS=(
 )
 
 for TASK in "${TASKS[@]}"; do
-    MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --include localhost:4,5,6,7 train/classification/train_candidate_decoder.py \
+    MIMIC_SKIP_SAMPLE_CACHE_CHECK=1 deepspeed --include localhost:0,1,2,3,4,5,6,7 train/classification/train_candidate_decoder.py \
         --deepspeed "ds_config_zero2.json" \
         --dataset_name "ehr_bench" \
         --output_dir "/data/zikun_workspace/checkpoints/ehr_bench/${TASK}/table_encoder/candidate_decoder" \
@@ -39,10 +39,10 @@ for TASK in "${TASKS[@]}"; do
         --query_embedding_cache "/data/zikun_workspace/.cache/embeddings/query_candidate/ehr_bench_task_candidate_embeddings.pt" \
         --knowledge_encoder_path "/data/zikun_workspace/checkpoints/pretraining/knowledge_encoder/clinicalBERT_after_stage2/best.pt" \
         --knowledge_encoder_base_model_path "/data/model_weights_public/emilyalsentzer/Bio_ClinicalBERT" \
-        --max_table_len 16384 \
+        --max_table_len 4096 \
         --per_device_train_batch_size 16 \
         --per_device_eval_batch_size 64 \
-        --num_train_epochs 100 \
+        --num_train_epochs 50 \
         --learning_rate 1e-5 \
         --lr_scheduler_type cosine_with_min_lr \
         --lr_scheduler_kwargs '{"min_lr": 1e-6}' \

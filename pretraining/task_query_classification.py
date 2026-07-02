@@ -412,7 +412,7 @@ class TaskQueryCollator:
             type_vocab=self.type_vocab,
         )
         table_tensors["query_embeds"] = torch.stack(query_embeds)
-        table_tensors["candidate_embeds"] = self.candidate_embeddings.unsqueeze(0).expand(len(labels), -1, -1)
+        table_tensors["candidate_embeds"] = self.candidate_embeddings.unsqueeze(0).expand(len(labels), -1, -1).clone()
         table_tensors["candidate_mask"] = torch.ones(len(labels), self.candidate_embeddings.size(0), dtype=torch.float)
         table_tensors["labels"] = torch.tensor(labels, dtype=torch.long)
         return table_tensors

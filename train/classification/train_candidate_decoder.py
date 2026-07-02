@@ -22,6 +22,8 @@ from dataset.mimic.mimic_dataset import MIMICIV
 from dataset.mimic.task_info import get_task_info as get_mimic_task_info
 from dataset.mimic_iv_cdm.mimic_iv_cdm_dataset import MIMICIVCDM
 from dataset.mimic_iv_cdm.task_info import get_task_info as get_mimic_iv_cdm_task_info
+from dataset.pds.pds_dataset import PDSDataset
+from dataset.pds.task_info import get_task_info as get_pds_task_info
 from models.TableEncoder.config import LongTableEncoder1DConfig
 from models.query_candidate_decoder import TaskQueryCandidateDecoderModel
 from utils.candidate_tasks import build_candidate_embedding_texts, candidate_embedding_keys, get_candidate_texts
@@ -87,7 +89,11 @@ class DataArguments:
     query_max_length: int = field(default=512)
     max_train_samples: Optional[int] = field(default=None)
     max_eval_samples: Optional[int] = field(default=None)
+    max_train_patients: Optional[int] = field(default=None)
+    max_eval_patients: Optional[int] = field(default=None)
     lazy_mode: bool = field(default=True)
+    trial_id: Optional[str] = field(default=None)
+    patient_split_path: Optional[str] = field(default=None)
 
 
 @dataclass
@@ -107,6 +113,8 @@ def get_dataset_task_info(dataset_name: str):
         return get_mimic_task_info()
     if dataset_name == "renji":
         return get_renji_task_info()
+    if dataset_name == "pds":
+        return get_pds_task_info()
     raise ValueError(f"Unsupported dataset_name: {dataset_name}")
 
 
@@ -130,6 +138,7 @@ def build_renji_embedding_texts() -> dict[str, str]:
 
 def build_dataset(data_args: DataArguments, split: str):
     max_samples = data_args.max_train_samples if split == "train" else data_args.max_eval_samples
+    max_patients = data_args.max_train_patients if split == "train" else data_args.max_eval_patients
     train_info_path = data_args.train_info_path or data_args.train_sample_info_path
     val_info_path = data_args.val_info_path or data_args.val_sample_info_path
     if data_args.dataset_name == "eicu":
@@ -179,6 +188,20 @@ def build_dataset(data_args: DataArguments, split: str):
             shuffle=(split == "train"),
             max_samples=max_samples,
             target_prediction_points=RENJI_ACTIVE_POINTS,
+        )
+    if data_args.dataset_name == "pds":
+        if data_args.patient_split_path is None or not str(data_args.patient_split_path).strip():
+            raise ValueError("--patient_split_path is required when --dataset_name pds")
+        trial_ids = [item.strip() for item in str(data_args.trial_id).split(",") if item.strip()]
+        return PDSDataset(
+            root_dir=data_args.data_dir,
+            split=split,
+            task_name=data_args.task_name,
+            trial_ids=trial_ids,
+            patient_split_path=data_args.patient_split_path,
+            shuffle=(split == "train"),
+            max_samples=max_samples,
+            max_patients=max_patients,
         )
     raise ValueError(f"Unsupported dataset_name: {data_args.dataset_name}")
 
@@ -239,6 +262,13 @@ def main():
         training_args.report_to = ["wandb"]
     set_seed(training_args.seed)
 
+    if data_args.dataset_name == "pds" and (data_args.trial_id is None or not str(data_args.trial_id).strip()):
+        raise ValueError("--trial_id is required when --dataset_name pds")
+    if data_args.dataset_name == "pds" and (
+        data_args.patient_split_path is None or not str(data_args.patient_split_path).strip()
+    ):
+        raise ValueError("--patient_split_path is required when --dataset_name pds")
+
     is_multi_query_dataset = data_args.dataset_name == "renji"
     if is_multi_query_dataset:
         task_info = get_dataset_task_info(data_args.dataset_name)[data_args.task_name or "candidate_metric_prediction"]
@@ -246,8 +276,16 @@ def main():
         query_key = f"{data_args.dataset_name}:{data_args.task_name or 'candidate_metric_prediction'}"
     else:
         task_info = get_dataset_task_info(data_args.dataset_name)[data_args.task_name]
+        if data_args.dataset_name == "pds":
+            task_info = dict(task_info)
+            task_info["instruction"] = PDSDataset.task_instruction(
+                data_args.task_name,
+                data_args.trial_id,
+            )
         candidate_texts = get_candidate_texts(task_info)
         query_key = f"{data_args.dataset_name}:{data_args.task_name}"
+        if data_args.dataset_name == "pds" and data_args.trial_id:
+            query_key = f"{query_key}:trial:{data_args.trial_id}"
 
     has_val = data_args.val_info_path is not None or data_args.val_sample_info_path is not None
     if has_val and training_args.eval_strategy == "no":

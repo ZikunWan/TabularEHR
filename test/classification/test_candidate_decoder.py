@@ -24,6 +24,8 @@ from dataset.mimic.mimic_dataset import MIMICIV
 from dataset.mimic.task_info import get_task_info as get_mimic_task_info
 from dataset.mimic_iv_cdm.mimic_iv_cdm_dataset import MIMICIVCDM
 from dataset.mimic_iv_cdm.task_info import get_task_info as get_mimic_iv_cdm_task_info
+from dataset.pds.pds_dataset import PDSDataset
+from dataset.pds.task_info import get_task_info as get_pds_task_info
 from models.TableEncoder.config import LongTableEncoder1DConfig
 from models.query_candidate_decoder import TaskQueryCandidateDecoderModel
 from utils.candidate_tasks import build_candidate_embedding_texts, candidate_embedding_keys, get_candidate_texts
@@ -68,6 +70,8 @@ class DataArguments:
     max_eval_samples: Optional[int] = field(default=None)
     seed: int = field(default=42)
     split: str = field(default="test")
+    trial_id: Optional[str] = field(default=None)
+    patient_split_path: Optional[str] = field(default=None)
 
 
 def get_dataset_task_info(dataset_name: str):
@@ -81,6 +85,8 @@ def get_dataset_task_info(dataset_name: str):
         return get_mimic_task_info()
     if dataset_name == "renji":
         return get_renji_task_info()
+    if dataset_name == "pds":
+        return get_pds_task_info()
     raise ValueError(f"Unsupported dataset_name: {dataset_name}")
 
 
@@ -151,6 +157,19 @@ def build_eval_dataset(data_args: DataArguments):
             max_samples=data_args.max_eval_samples,
             target_prediction_points=RENJI_ACTIVE_POINTS,
         )
+    if data_args.dataset_name == "pds":
+        if data_args.patient_split_path is None or not str(data_args.patient_split_path).strip():
+            raise ValueError("--patient_split_path is required when --dataset_name pds")
+        trial_ids = [item.strip() for item in str(data_args.trial_id).split(",") if item.strip()]
+        return PDSDataset(
+            root_dir=data_args.data_dir,
+            task_name=data_args.task_name,
+            trial_ids=trial_ids,
+            split=data_args.split,
+            patient_split_path=data_args.patient_split_path,
+            shuffle=False,
+            max_samples=data_args.max_eval_samples,
+        )
     raise ValueError(f"Unsupported dataset_name: {data_args.dataset_name}")
 
 
@@ -189,6 +208,13 @@ def main():
     model_args, data_args = parser.parse_args_into_dataclasses()
     set_seed(data_args.seed)
 
+    if data_args.dataset_name == "pds" and (data_args.trial_id is None or not str(data_args.trial_id).strip()):
+        raise ValueError("--trial_id is required when --dataset_name pds")
+    if data_args.dataset_name == "pds" and (
+        data_args.patient_split_path is None or not str(data_args.patient_split_path).strip()
+    ):
+        raise ValueError("--patient_split_path is required when --dataset_name pds")
+
     is_multi_query_dataset = data_args.dataset_name == "renji"
     if is_multi_query_dataset:
         task_info = get_dataset_task_info(data_args.dataset_name)[data_args.task_name or "candidate_metric_prediction"]
@@ -196,8 +222,16 @@ def main():
         query_key = f"{data_args.dataset_name}:{data_args.task_name or 'candidate_metric_prediction'}"
     else:
         task_info = get_dataset_task_info(data_args.dataset_name)[data_args.task_name]
+        if data_args.dataset_name == "pds":
+            task_info = dict(task_info)
+            task_info["instruction"] = PDSDataset.task_instruction(
+                data_args.task_name,
+                data_args.trial_id,
+            )
         candidate_texts = get_candidate_texts(task_info)
         query_key = f"{data_args.dataset_name}:{data_args.task_name}"
+        if data_args.dataset_name == "pds" and data_args.trial_id:
+            query_key = f"{query_key}:trial:{data_args.trial_id}"
 
     embedding_cache, text_dim = load_embedding_cache(data_args.embedding_cache)
     vocab_keys = build_vocab_keys(embedding_cache)

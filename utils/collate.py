@@ -504,8 +504,8 @@ def create_single_query_candidate_collate_fn(
             type_vocab=type_vocab,
         )
         batch_size = len(tables)
-        tensors["query_embeds"] = query_embed.float().unsqueeze(0).expand(batch_size, -1)
-        tensors["candidate_embeds"] = candidate_embeds.float().unsqueeze(0).expand(batch_size, -1, -1)
+        tensors["query_embeds"] = query_embed.float().unsqueeze(0).expand(batch_size, -1).clone()
+        tensors["candidate_embeds"] = candidate_embeds.float().unsqueeze(0).expand(batch_size, -1, -1).clone()
         tensors["candidate_mask"] = torch.ones(batch_size, candidate_embeds.size(0), dtype=torch.float32)
         tensors["labels"] = torch.tensor(labels, dtype=torch.long)
         return tensors
